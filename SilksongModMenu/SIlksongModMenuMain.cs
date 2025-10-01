@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 
@@ -22,6 +23,17 @@ namespace ModUINamespace
         private static MenuButton modOptionsButton = null;
         private static Transform modsContentParent;
         private static GameObject rowPrototype;
+
+        // ========== 在类的顶部添加静态字典来追踪每行的调整状态 ==========
+        private static Dictionary<string, bool> rowAdjustmentStatus = new Dictionary<string, bool>();
+
+        // ========== 添加重置方法（在进入 Mod Options 界面时调用） ==========
+        private static void ResetAllRowAdjustments()
+        {
+            rowAdjustmentStatus.Clear();
+            Logger.LogInfo("Reset all row adjustment status");
+        }
+
 
         private void Awake()
         {
@@ -517,6 +529,9 @@ namespace ModUINamespace
             {
                 CreateModOptionsMenu(uiManager);
             }
+
+            ResetAllRowAdjustments();
+
             BuildModsList();
 
             uiManager.StartCoroutine(ShowModMenuCoroutine(uiManager));
@@ -700,54 +715,238 @@ namespace ModUINamespace
             }
         }
 
-
         private static void SetupModsContent(GameObject menuObj)
         {
+            Logger.LogInfo("=== SetupModsContent START ===");
+
             modsContentParent = FindContentParent(menuObj);
+            Logger.LogInfo($"modsContentParent found: {modsContentParent != null}");
+
             if (modsContentParent == null)
             {
                 Logger.LogError("Content parent not found.");
                 return;
             }
 
-            // 清空已有行（避免残留原设置项），但不要破坏父布局组件
-            for (int i = modsContentParent.childCount - 1; i >= 0; i--)
+            Logger.LogInfo($"Content parent name: {modsContentParent.name}, children: {modsContentParent.childCount}");
+
+            // **使用 nativeAchievementsOption 作为原型**
+            var gmo = menuObj.GetComponentInChildren<GameMenuOptions>(true);
+            Logger.LogInfo($"GameMenuOptions found: {gmo != null}");
+
+            if (gmo != null && gmo.nativeAchievementsOption != null)
             {
-                var child = modsContentParent.GetChild(i).gameObject;
-                Destroy(child);
+                Logger.LogInfo($"nativeAchievementsOption found: {gmo.nativeAchievementsOption.name}");
+                var p = gmo.nativeAchievementsOption.transform.parent;
+                if (p != null)
+                {
+                    rowPrototype = p.gameObject;
+                    Logger.LogInfo($"Using nativeAchievementsOption parent as prototype: {rowPrototype.name}");
+                }
             }
 
-            // 新的 rowPrototype：语言选项那一行的父容器
-            var gmo = menuObj.GetComponentInChildren<GameMenuOptions>(true);
-            if (gmo != null && gmo.languageOption != null)
+            // 备选方案：使用 languageOption
+            if (rowPrototype == null && gmo != null && gmo.languageOption != null)
             {
+                Logger.LogWarning("nativeAchievementsOption not found, using languageOption as fallback");
                 var p = gmo.languageOption.transform.parent;
                 if (p != null)
                 {
                     rowPrototype = p.gameObject;
+                    Logger.LogInfo($"Using languageOption parent as prototype: {rowPrototype.name}");
                 }
             }
 
-            // 如果拿不到，兜底用通用 MenuSelectable 行或合成
             if (rowPrototype == null)
             {
-                var anySel = menuObj.GetComponentsInChildren<MenuSelectable>(true).FirstOrDefault();
-                if (anySel != null)
+                Logger.LogError("Cannot find suitable prototype!");
+                return;
+            }
+
+            // 给原型打标记
+            rowPrototype.name = "___MOD_ROW_PROTOTYPE___";
+
+            // 清空内容(跳过原型)
+            for (int i = modsContentParent.childCount - 1; i >= 0; i--)
+            {
+                var child = modsContentParent.GetChild(i).gameObject;
+                if (child == rowPrototype)
                 {
-                    var p = anySel.transform.parent;
-                    rowPrototype = p ? p.gameObject : anySel.gameObject;
+                    Logger.LogInfo($"Skipping prototype during initial cleanup: {child.name}");
+                    continue;
                 }
-            }
-            if (rowPrototype == null)
-            {
-                rowPrototype = SynthesizeSimpleRow(modsContentParent);
+                Logger.LogInfo($"Destroying child: {child.name}");
+                Destroy(child);
             }
 
-            // 关键：不要禁用 rowPrototype 上的脚本，也不要 Sanitize。
+            // 确保原型隐藏
             rowPrototype.SetActive(false);
             if (rowPrototype.transform.parent != modsContentParent)
+            {
+                Logger.LogInfo("Moving prototype to content parent");
                 rowPrototype.transform.SetParent(modsContentParent, false);
+            }
+
+            Logger.LogInfo($"Final rowPrototype: {rowPrototype != null}, active: {rowPrototype.activeSelf}, name: {rowPrototype.name}");
+
+            // ========== 详细分析原型 ==========
+            if (rowPrototype != null)
+            {
+                Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
+                Logger.LogInfo("║ PROTOTYPE DETAILED ANALYSIS");
+                Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
+
+                // 1. 分析层级结构
+                Logger.LogInfo("║ [HIERARCHY]");
+                AnalyzeHierarchy(rowPrototype.transform, "║   ");
+
+                Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
+                Logger.LogInfo("║ [ALL COMPONENTS]");
+
+                // 2. 分析所有组件
+                var allComps = rowPrototype.GetComponentsInChildren<Component>(true);
+                foreach (var comp in allComps)
+                {
+                    if (comp == null) continue;
+
+                    var go = comp.gameObject;
+                    var typeName = comp.GetType().Name;
+                    Logger.LogInfo($"║ [{go.name}] {typeName}");
+
+                    // 3. 详细分析 Selectable
+                    if (comp is Selectable sel)
+                    {
+                        Logger.LogInfo($"║   ├─ Interactable: {sel.interactable}");
+                        Logger.LogInfo($"║   ├─ Navigation: {sel.navigation.mode}");
+                        Logger.LogInfo($"║   ├─ Transition: {sel.transition}");
+
+                        if (sel.transition == Selectable.Transition.ColorTint)
+                        {
+                            var colors = sel.colors;
+                            Logger.LogInfo($"║   ├─ ColorBlock:");
+                            Logger.LogInfo($"║   │  ├─ Normal: {ColorToString(colors.normalColor)}");
+                            Logger.LogInfo($"║   │  ├─ Highlighted: {ColorToString(colors.highlightedColor)}");
+                            Logger.LogInfo($"║   │  ├─ Pressed: {ColorToString(colors.pressedColor)}");
+                            Logger.LogInfo($"║   │  ├─ Selected: {ColorToString(colors.selectedColor)}");
+                            Logger.LogInfo($"║   │  └─ Disabled: {ColorToString(colors.disabledColor)}");
+                        }
+                        else if (sel.transition == Selectable.Transition.SpriteSwap)
+                        {
+                            Logger.LogInfo($"║   ├─ SpriteState:");
+                            Logger.LogInfo($"║   │  ├─ HighlightedSprite: {sel.spriteState.highlightedSprite?.name ?? "null"}");
+                            Logger.LogInfo($"║   │  ├─ PressedSprite: {sel.spriteState.pressedSprite?.name ?? "null"}");
+                            Logger.LogInfo($"║   │  └─ SelectedSprite: {sel.spriteState.selectedSprite?.name ?? "null"}");
+                        }
+                        else if (sel.transition == Selectable.Transition.Animation)
+                        {
+                            Logger.LogInfo($"║   ├─ AnimationTriggers:");
+                            Logger.LogInfo($"║   │  ├─ Normal: {sel.animationTriggers.normalTrigger}");
+                            Logger.LogInfo($"║   │  ├─ Highlighted: {sel.animationTriggers.highlightedTrigger}");
+                            Logger.LogInfo($"║   │  ├─ Pressed: {sel.animationTriggers.pressedTrigger}");
+                            Logger.LogInfo($"║   │  └─ Selected: {sel.animationTriggers.selectedTrigger}");
+                        }
+
+                        // 检查 TargetGraphic
+                        if (sel.targetGraphic != null)
+                        {
+                            Logger.LogInfo($"║   └─ TargetGraphic: {sel.targetGraphic.GetType().Name} on '{sel.targetGraphic.gameObject.name}'");
+                        }
+                    }
+
+                    // 4. 详细分析 EventTrigger
+                    if (comp is EventTrigger et)
+                    {
+                        Logger.LogInfo($"║   ├─ EventTrigger count: {et.triggers.Count}");
+                        foreach (var trigger in et.triggers)
+                        {
+                            Logger.LogInfo($"║   │  ├─ {trigger.eventID} (callbacks: {trigger.callback.GetPersistentEventCount()})");
+                        }
+                    }
+
+                    // 5. 分析 Button
+                    if (comp is Button btn)
+                    {
+                        Logger.LogInfo($"║   ├─ Button.onClick listeners: {btn.onClick.GetPersistentEventCount()}");
+                    }
+
+                    // 6. 分析 MenuButton
+                    if (typeName == "MenuButton")
+                    {
+                        try
+                        {
+                            var type = comp.GetType();
+                            var onSubmitField = type.GetField("OnSubmitPressed", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                            if (onSubmitField != null)
+                            {
+                                var submitEvent = onSubmitField.GetValue(comp);
+                                if (submitEvent != null)
+                                {
+                                    var getCountMethod = submitEvent.GetType().GetProperty("PersistentEventCount");
+                                    if (getCountMethod != null)
+                                    {
+                                        var count = getCountMethod.GetValue(submitEvent);
+                                        Logger.LogInfo($"║   ├─ MenuButton.OnSubmitPressed listeners: {count}");
+                                    }
+                                }
+                            }
+                        }
+                        catch (System.Exception e)
+                        {
+                            Logger.LogInfo($"║   ├─ MenuButton analysis failed: {e.Message}");
+                        }
+                    }
+
+                    // 7. 分析 Animator
+                    if (comp is Animator anim)
+                    {
+                        Logger.LogInfo($"║   ├─ Animator:");
+                        Logger.LogInfo($"║   │  ├─ Controller: {anim.runtimeAnimatorController?.name ?? "null"}");
+                        Logger.LogInfo($"║   │  └─ Enabled: {anim.enabled}");
+                    }
+
+                    // 8. 分析 Image
+                    if (comp is UnityEngine.UI.Image img)
+                    {
+                        Logger.LogInfo($"║   ├─ Image:");
+                        Logger.LogInfo($"║   │  ├─ Sprite: {img.sprite?.name ?? "null"}");
+                        Logger.LogInfo($"║   │  ├─ Color: {ColorToString(img.color)}");
+                        Logger.LogInfo($"║   │  └─ Type: {img.type}");
+                    }
+
+                    // 9. 分析 Text
+                    if (comp is Text txt)
+                    {
+                        Logger.LogInfo($"║   ├─ Text: \"{txt.text}\"");
+                        Logger.LogInfo($"║   └─ Color: {ColorToString(txt.color)}");
+                    }
+                }
+
+                Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
+            }
+
+            Logger.LogInfo("=== SetupModsContent END ===");
         }
+
+        // 辅助方法：递归分析层级
+        private static void AnalyzeHierarchy(Transform t, string prefix, int depth = 0)
+        {
+            if (depth > 5) return; // 防止太深
+
+            Logger.LogInfo($"{prefix}{t.name} (active: {t.gameObject.activeSelf})");
+
+            foreach (Transform child in t)
+            {
+                AnalyzeHierarchy(child, prefix + "  ", depth + 1);
+            }
+        }
+
+        // 辅助方法：颜色转字符串
+        private static string ColorToString(Color c)
+        {
+            return $"RGBA({c.r:F2}, {c.g:F2}, {c.b:F2}, {c.a:F2})";
+        }
+
+
 
         // === 新增：查找行原型（语言选项父节点或任意 MenuSelectable 父节点） ===
         private static GameObject FindRowPrototype(Transform root)
@@ -816,30 +1015,52 @@ namespace ModUINamespace
             return row;
         }
 
-        // === 新增：构建 Mod 列表 ===
         private static void BuildModsList()
         {
-            if (modOptionsMenuScreen == null) return;
+            Logger.LogInfo("=== BuildModsList START ===");
+            Logger.LogInfo($"modOptionsMenuScreen: {modOptionsMenuScreen != null}");
+            Logger.LogInfo($"modsContentParent: {modsContentParent != null}");
+            Logger.LogInfo($"rowPrototype: {rowPrototype != null}");
+
+            if (modOptionsMenuScreen == null)
+            {
+                Logger.LogError("modOptionsMenuScreen is null!");
+                return;
+            }
+
             if (modsContentParent == null || rowPrototype == null)
             {
                 Logger.LogWarning("BuildModsList: content or rowPrototype missing, trying SetupModsContent again.");
                 SetupModsContent(modOptionsMenuScreen.gameObject);
+
+                Logger.LogInfo($"After retry - modsContentParent: {modsContentParent != null}");
+                Logger.LogInfo($"After retry - rowPrototype: {rowPrototype != null}");
+
                 if (modsContentParent == null || rowPrototype == null)
                 {
-                    Logger.LogError("BuildModsList failed: content parent or row prototype is null.");
+                    Logger.LogError("BuildModsList failed: content parent or row prototype is null after retry.");
                     return;
                 }
             }
 
-            // 清除旧行（保留原型）
+            Logger.LogInfo($"Content parent children before clear: {modsContentParent.childCount}");
+
+            // 清除旧行
             for (int i = modsContentParent.childCount - 1; i >= 0; i--)
             {
                 var child = modsContentParent.GetChild(i).gameObject;
-                if (child == rowPrototype) continue;
+                if (child == rowPrototype)
+                {
+                    Logger.LogInfo($"Skipping prototype: {child.name}");
+                    continue;
+                }
+                Logger.LogInfo($"Destroying old row: {child.name}");
                 Destroy(child);
             }
 
             var mods = DiscoverLoadedPluginsForList();
+            Logger.LogInfo($"Found {mods.Count} mods");
+
             if (mods.Count == 0)
             {
                 CreateHintRow("No mods detected.");
@@ -847,111 +1068,320 @@ namespace ModUINamespace
             else
             {
                 foreach (var m in mods)
-                    CreateModRow_UseLanguageStyle(m.displayName, m.enabled, m.onToggle);
+                {
+                    Logger.LogInfo($"Creating row for mod: {m.displayName}");
+                    CreateModRow_UseAchievementsStyle(m.displayName, m.enabled, m.onToggle);
+                }
             }
 
             var rt = modsContentParent as RectTransform;
             if (rt) LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+
+            Logger.LogInfo($"Content parent children after build: {modsContentParent.childCount}");
+            Logger.LogInfo("=== BuildModsList END ===");
         }
 
-        private static void CreateModRow_UseLanguageStyle(string label, bool initial, Action<bool> onChanged)
+        private static void CreateModRow_UseAchievementsStyle(string modName, bool initialEnabled, System.Action<bool> onToggle)
         {
-            var row = UnityEngine.Object.Instantiate(rowPrototype, modsContentParent);
-            row.name = "Row_" + label;
-            row.SetActive(true);
-
-            // 更精确的文本识别方法
-            Text leftLabel = null;
-            Text rightValue = null;
-
-            var texts = row.GetComponentsInChildren<Text>(true);
-            if (texts != null && texts.Length > 0)
+            if (rowPrototype == null || modsContentParent == null)
             {
-                // 方法1：按层级顺序识别（通常第一个是标签，第二个是值）
-                if (texts.Length >= 2)
+                Logger.LogError("Cannot create mod row: prototype or parent is null");
+                return;
+            }
+
+            var newRow = Instantiate(rowPrototype, modsContentParent);
+            newRow.name = "Row_" + modName;
+            newRow.SetActive(true);
+
+            Logger.LogInfo($"Creating mod row for: {modName}");
+
+            bool currentState = initialEnabled;
+
+            // **保存原始的 Selectable 配置**
+            var originalMenuOption = newRow.GetComponentInChildren<MenuOptionHorizontal>(true);
+            Navigation originalNav = default;
+            bool wasInteractable = true;
+
+            if (originalMenuOption != null)
+            {
+                originalNav = originalMenuOption.navigation;
+                wasInteractable = originalMenuOption.interactable;
+                Logger.LogInfo($"Saved original navigation: {originalNav.mode}");
+                DestroyImmediate(originalMenuOption);
+            }
+
+            // **处理文本**
+            var allTexts = newRow.GetComponentsInChildren<Text>(true);
+            Text labelText = null;
+            Text valueText = null;
+
+            if (allTexts.Length > 0) labelText = allTexts[0];
+            if (allTexts.Length > 1) valueText = allTexts[1];
+
+            Logger.LogInfo($"Found {allTexts.Length} Text components");
+
+            // **移除本地化**
+            foreach (var text in allTexts)
+            {
+                if (text == null) continue;
+
+                var platformLocal = text.GetComponent<PlatformSpecificLocalisation>();
+                if (platformLocal != null) DestroyImmediate(platformLocal);
+
+                var autoLocal = text.GetComponent<AutoLocalizeTextUI>();
+                if (autoLocal != null) DestroyImmediate(autoLocal);
+            }
+
+            // 更新显示
+            void UpdateDisplay()
+            {
+                if (labelText != null) labelText.text = modName;
+                if (valueText != null) valueText.text = currentState ? "ON" : "OFF";
+            }
+
+            UpdateDisplay();
+
+            // ========== 首次点击时动态调整位置 ==========
+            void AdjustTextPositionOnFirstInteraction()
+            {
+                // 检查这一行在本次界面打开后是否已调整过
+                if (rowAdjustmentStatus.ContainsKey(modName) && rowAdjustmentStatus[modName])
                 {
-                    leftLabel = texts[0];
-                    rightValue = texts[1];
-                }
-                else if (texts.Length == 1)
-                {
-                    leftLabel = texts[0];
+                    Logger.LogInfo($"[{modName}] Already adjusted in this session");
+                    return;
                 }
 
-                // 方法2：如果方法1不准确，按RectTransform的实际屏幕位置判断
-                if (texts.Length >= 2)
-                {
-                    var sortedByX = texts.OrderBy(t => {
-                        var rt = t.GetComponent<RectTransform>();
-                        if (rt != null)
-                        {
-                            Vector3[] corners = new Vector3[4];
-                            rt.GetWorldCorners(corners);
-                            return corners[0].x; // 左下角的x坐标
-                        }
-                        return 0f;
-                    }).ToArray();
+                Logger.LogInfo($"[{modName}] First click detected, adjusting positions...");
 
-                    leftLabel = sortedByX[0];
-                    rightValue = sortedByX[sortedByX.Length - 1];
+                if (labelText != null)
+                {
+                    var labelRT = labelText.GetComponent<RectTransform>();
+                    if (labelRT != null)
+                    {
+                        Logger.LogInfo($"[{modName}] Label before: {labelRT.anchoredPosition}");
+
+                        // 调整这个值来补偿上跳
+                        float offsetY = -9f;
+
+                        labelRT.anchoredPosition = new Vector2(
+                            labelRT.anchoredPosition.x,
+                            labelRT.anchoredPosition.y + offsetY
+                        );
+
+                        Logger.LogInfo($"[{modName}] Label after: {labelRT.anchoredPosition}");
+                    }
+                }
+
+                if (valueText != null)
+                {
+                    var valueRT = valueText.GetComponent<RectTransform>();
+                    if (valueRT != null)
+                    {
+                        Logger.LogInfo($"[{modName}] Value before: {valueRT.anchoredPosition}");
+
+                        float offsetY = -10f;
+
+                        valueRT.anchoredPosition = new Vector2(
+                            valueRT.anchoredPosition.x,
+                            valueRT.anchoredPosition.y + offsetY
+                        );
+
+                        Logger.LogInfo($"[{modName}] Value after: {valueRT.anchoredPosition}");
+                    }
+                }
+
+                // 标记为已调整
+                rowAdjustmentStatus[modName] = true;
+                Logger.LogInfo($"[{modName}] ✅ Position adjustment completed");
+            }
+            // ========== 结束动态调整 ==========
+
+            // **找到可交互对象**
+            GameObject interactableObj = null;
+            Animator[] cursors = null;
+
+            foreach (Transform child in newRow.transform)
+            {
+                if (child.name.Contains("Option"))
+                {
+                    interactableObj = child.gameObject;
+                    cursors = child.GetComponentsInChildren<Animator>(true);
+                    Logger.LogInfo($"Found option object: {child.name}, cursors: {cursors.Length}");
+                    break;
                 }
             }
 
-            // 设置文本内容
-            if (leftLabel != null)
+            if (interactableObj != null)
             {
-                leftLabel.text = label;
-                // 移除标签的本地化
-                var loc = leftLabel.GetComponent<AutoLocalizeTextUI>();
-                if (loc) Destroy(loc);
-            }
+                var selectable = interactableObj.AddComponent<Selectable>();
+                selectable.transition = Selectable.Transition.None;
+                selectable.navigation = originalNav;
+                selectable.interactable = wasInteractable;
+                Logger.LogInfo("Rebuilt Selectable with original config");
 
-            if (rightValue != null)
-            {
-                rightValue.text = initial ? "On" : "Off";
-                // 移除值的本地化
-                var loc = rightValue.GetComponent<AutoLocalizeTextUI>();
-                if (loc) Destroy(loc);
-            }
+                var eventTrigger = interactableObj.AddComponent<EventTrigger>();
 
-            // 交互逻辑保持不变...
-            var selectable = row.GetComponentInChildren<Selectable>(true);
-            if (selectable != null)
-            {
-                var btn = row.GetComponentInChildren<Button>(true);
-                if (btn == null)
+                // ========== ✅ 只在点击时调整 ==========
+                var pointerClick = new EventTrigger.Entry { eventID = EventTriggerType.PointerClick };
+                pointerClick.callback.AddListener((data) =>
                 {
-                    btn = row.GetComponent<Button>();
-                    if (btn == null) btn = row.AddComponent<Button>();
-                    if (btn.transition == Selectable.Transition.None)
-                        btn.transition = Selectable.Transition.ColorTint;
-                }
-
-                bool state = initial;
-                void Refresh()
-                {
-                    if (rightValue) rightValue.text = state ? "On" : "Off";
-                }
-                Refresh();
-
-                btn.onClick.RemoveAllListeners();
-                btn.onClick.AddListener(() =>
-                {
-                    state = !state;
-                    Refresh();
-                    try { onChanged?.Invoke(state); }
-                    catch (Exception e) { Logger.LogError($"Toggle handler error for {label}: {e}"); }
+                    AdjustTextPositionOnFirstInteraction(); // 👈 首次点击时调整
+                    currentState = !currentState;
+                    UpdateDisplay();
+                    onToggle?.Invoke(currentState);
+                    Logger.LogInfo($"Toggled {modName} to {currentState}");
                 });
+                eventTrigger.triggers.Add(pointerClick);
 
-                if (selectable.navigation.mode != Navigation.Mode.Explicit)
+                var submit = new EventTrigger.Entry { eventID = EventTriggerType.Submit };
+                submit.callback.AddListener((data) =>
                 {
-                    var nav = new Navigation { mode = Navigation.Mode.Explicit };
-                    selectable.navigation = nav;
-                }
+                    AdjustTextPositionOnFirstInteraction(); // 👈 首次 Submit 时调整
+                    currentState = !currentState;
+                    UpdateDisplay();
+                    onToggle?.Invoke(currentState);
+                    Logger.LogInfo($"Toggled {modName} to {currentState} (Submit)");
+                });
+                eventTrigger.triggers.Add(submit);
+                // ========== 结束点击调整 ==========
 
+                // ========== Hover/Select 不调整位置，只控制光标动画 ==========
+                var pointerEnter = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+                pointerEnter.callback.AddListener((data) =>
+                {
+                    // 移除了 AdjustTextPositionOnFirstInteraction()
+                    Logger.LogInfo($"PointerEnter on {modName}");
+
+                    selectable.OnPointerEnter(null);
+
+                    if (cursors != null)
+                    {
+                        foreach (var cursor in cursors)
+                        {
+                            if (cursor != null && cursor.gameObject.name.Contains("Cursor"))
+                            {
+                                cursor.SetTrigger("show");
+                                cursor.SetBool("selected", true);
+                                Logger.LogInfo($"Triggered animator on {cursor.gameObject.name}");
+                            }
+                        }
+                    }
+                });
+                eventTrigger.triggers.Add(pointerEnter);
+
+                var pointerExit = new EventTrigger.Entry { eventID = EventTriggerType.PointerExit };
+                pointerExit.callback.AddListener((data) =>
+                {
+                    Logger.LogInfo($"PointerExit on {modName}");
+                    selectable.OnPointerExit(null);
+
+                    if (cursors != null)
+                    {
+                        foreach (var cursor in cursors)
+                        {
+                            if (cursor != null && cursor.gameObject.name.Contains("Cursor"))
+                            {
+                                cursor.SetTrigger("hide");
+                                cursor.SetBool("selected", false);
+                                Logger.LogInfo($"Reset animator on {cursor.gameObject.name}");
+                            }
+                        }
+                    }
+                });
+                eventTrigger.triggers.Add(pointerExit);
+
+                var select = new EventTrigger.Entry { eventID = EventTriggerType.Select };
+                select.callback.AddListener((data) =>
+                {
+                    // 移除了 AdjustTextPositionOnFirstInteraction()
+                    Logger.LogInfo($"Select on {modName}");
+                    if (cursors != null)
+                    {
+                        foreach (var cursor in cursors)
+                        {
+                            if (cursor != null && cursor.gameObject.name.Contains("Cursor"))
+                            {
+                                cursor.SetTrigger("show");
+                                cursor.SetBool("selected", true);
+                            }
+                        }
+                    }
+                });
+                eventTrigger.triggers.Add(select);
+
+                var deselect = new EventTrigger.Entry { eventID = EventTriggerType.Deselect };
+                deselect.callback.AddListener((data) =>
+                {
+                    Logger.LogInfo($"Deselect on {modName}");
+                    if (cursors != null)
+                    {
+                        foreach (var cursor in cursors)
+                        {
+                            if (cursor != null && cursor.gameObject.name.Contains("Cursor"))
+                            {
+                                cursor.SetTrigger("hide");
+                                cursor.SetBool("selected", false);
+                            }
+                        }
+                    }
+                });
+                eventTrigger.triggers.Add(deselect);
+
+                Logger.LogInfo($"Configured EventTrigger for {modName}");
+            }
+            else
+            {
+                Logger.LogError($"Cannot find interactable object for {modName}");
             }
         }
 
+        // 辅助方法: 移除自动本地化
+        private static void RemoveAutoLocalize(GameObject obj)
+        {
+            var autoLocal = obj.GetComponent<AutoLocalizeTextUI>();
+            if (autoLocal != null)
+            {
+                try
+                {
+                    Destroy(autoLocal);
+                    Logger.LogInfo($"Removed AutoLocalizeTextUI from {obj.name}");
+                }
+                catch (System.Exception e)
+                {
+                    Logger.LogWarning($"Failed to remove AutoLocalizeTextUI: {e.Message}");
+                }
+            }
+        }
+
+        // 清空 MenuButton 事件
+        private static void ClearMenuButtonEvents(MenuButton btn)
+        {
+            if (btn == null) return;
+
+            Logger.LogInfo($"Clearing MenuButton events on {btn.name}");
+
+            // 清空 OnSubmitPressed UnityEvent
+            try
+            {
+                if (btn.OnSubmitPressed != null)
+                {
+                    btn.OnSubmitPressed.RemoveAllListeners();
+                }
+                btn.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
+            }
+            catch (System.Exception e)
+            {
+                Logger.LogWarning($"Failed to clear OnSubmitPressed: {e.Message}");
+            }
+
+            // 清空 EventTrigger
+            var trigger = btn.GetComponent<UnityEngine.EventSystems.EventTrigger>();
+            if (trigger != null)
+            {
+                Logger.LogInfo($"Clearing EventTrigger on {btn.name}");
+                trigger.triggers.Clear();
+            }
+        }
 
         // === 新增：Mod 数据源 ===
         private struct PluginItem
@@ -1217,17 +1647,20 @@ namespace ModUINamespace
             var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
             if (inputHandler != null) inputHandler.StopUIInput();
 
+            DiagnoseUIHierarchy(modOptionsMenuScreen.gameObject, "BEFORE SHOW");
+
             // 用原生隐藏 Extras，触发原生出场动画（不要传 disable）
             if (uiManager.extrasMenuScreen != null && uiManager.extrasMenuScreen.gameObject.activeSelf)
             {
                 yield return uiManager.HideMenu(uiManager.extrasMenuScreen);
             }
 
-            // 构建列表（不要破坏原生组件）
-            BuildModsList();
 
             // 用原生 ShowMenu 展示，触发丝线进场动画
             yield return uiManager.ShowMenu(modOptionsMenuScreen);
+
+            yield return new WaitForSeconds(0.1f); // 等动画稳定
+            DiagnoseUIHierarchy(modOptionsMenuScreen.gameObject, "AFTER SHOW (animation done)");
 
             var canvasGroup = modOptionsMenuScreen.ScreenCanvasGroup;
             if (canvasGroup != null)
@@ -1482,5 +1915,218 @@ namespace ModUINamespace
                 Logger.LogError($"Error fixing button position: {e}");
             }
         }
+
+        // 超强力 UI 诊断工具 - 递归分析整个菜单的所有可能影响位置的组件
+        private static void DiagnoseUIHierarchy(GameObject root, string phase)
+        {
+            Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
+            Logger.LogInfo($"║ UI HIERARCHY DIAGNOSIS - {phase}");
+            Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
+
+            // 1. 分析 ScrollRect 及其相关组件
+            var scrollRects = root.GetComponentsInChildren<ScrollRect>(true);
+            Logger.LogInfo($"║ Found {scrollRects.Length} ScrollRect(s)");
+
+            foreach (var sr in scrollRects)
+            {
+                Logger.LogInfo("║ ┌─ ScrollRect Analysis ─────────────────────────────────────");
+                Logger.LogInfo($"║ │ GameObject: {GetFullPath(sr.transform)}");
+                Logger.LogInfo($"║ │ Active: {sr.gameObject.activeSelf}");
+                Logger.LogInfo($"║ │ Enabled: {sr.enabled}");
+                Logger.LogInfo($"║ │ Vertical: {sr.vertical}");
+                Logger.LogInfo($"║ │ Horizontal: {sr.horizontal}");
+                Logger.LogInfo($"║ │ VerticalNormalizedPosition: {sr.verticalNormalizedPosition:F4}");
+                Logger.LogInfo($"║ │ HorizontalNormalizedPosition: {sr.horizontalNormalizedPosition:F4}");
+                Logger.LogInfo($"║ │ Velocity: {sr.velocity}");
+                Logger.LogInfo($"║ │ Inertia: {sr.inertia}");
+                Logger.LogInfo($"║ │ DecelerationRate: {sr.decelerationRate}");
+                Logger.LogInfo($"║ │ ScrollSensitivity: {sr.scrollSensitivity}");
+
+                if (sr.content != null)
+                {
+                    Logger.LogInfo($"║ │ Content: {sr.content.name}");
+                    Logger.LogInfo($"║ │ Content.anchoredPosition: {sr.content.anchoredPosition}");
+                    Logger.LogInfo($"║ │ Content.sizeDelta: {sr.content.sizeDelta}");
+                    Logger.LogInfo($"║ │ Content.pivot: {sr.content.pivot}");
+                    Logger.LogInfo($"║ │ Content.anchorMin: {sr.content.anchorMin}");
+                    Logger.LogInfo($"║ │ Content.anchorMax: {sr.content.anchorMax}");
+                }
+                else
+                {
+                    Logger.LogInfo($"║ │ Content: NULL");
+                }
+
+                if (sr.viewport != null)
+                {
+                    Logger.LogInfo($"║ │ Viewport: {sr.viewport.name}");
+                    Logger.LogInfo($"║ │ Viewport.anchoredPosition: {sr.viewport.anchoredPosition}");
+                    Logger.LogInfo($"║ │ Viewport.sizeDelta: {sr.viewport.sizeDelta}");
+                }
+                else
+                {
+                    Logger.LogInfo($"║ │ Viewport: NULL");
+                }
+
+                Logger.LogInfo("║ └────────────────────────────────────────────────────────────");
+            }
+
+            // 2. 分析所有 LayoutGroup 组件（修复后的版本）
+            Logger.LogInfo("║");
+            Logger.LogInfo("║ LayoutGroup Components:");
+
+            var allLayoutGroups = root.GetComponentsInChildren<LayoutGroup>(true);
+            Logger.LogInfo($"║ Found {allLayoutGroups.Length} LayoutGroup(s) total");
+
+            foreach (var layout in allLayoutGroups)
+            {
+                AnalyzeLayoutGroupUnified(layout);
+            }
+
+            // 3. 分析所有 ContentSizeFitter
+            Logger.LogInfo("║");
+            Logger.LogInfo("║ ContentSizeFitter Components:");
+            var sizeFitters = root.GetComponentsInChildren<ContentSizeFitter>(true);
+            Logger.LogInfo($"║ Found {sizeFitters.Length} ContentSizeFitter(s)");
+
+            foreach (var csf in sizeFitters)
+            {
+                Logger.LogInfo($"║ ├─ {GetFullPath(csf.transform)}");
+                Logger.LogInfo($"║ │  ├─ Enabled: {csf.enabled}");
+                Logger.LogInfo($"║ │  ├─ HorizontalFit: {csf.horizontalFit}");
+                Logger.LogInfo($"║ │  └─ VerticalFit: {csf.verticalFit}");
+            }
+
+            // 4. 分析所有 RectTransform 的位置（只显示非零的）
+            Logger.LogInfo("║");
+            Logger.LogInfo("║ RectTransform Positions (non-zero only):");
+            var allRects = root.GetComponentsInChildren<RectTransform>(true);
+
+            foreach (var rt in allRects)
+            {
+                if (rt.anchoredPosition != Vector2.zero || rt.anchoredPosition3D.z != 0)
+                {
+                    Logger.LogInfo($"║ ├─ {GetFullPath(rt)}");
+                    Logger.LogInfo($"║ │  ├─ anchoredPosition: {rt.anchoredPosition}");
+                    Logger.LogInfo($"║ │  ├─ anchoredPosition3D: {rt.anchoredPosition3D}");
+                    Logger.LogInfo($"║ │  ├─ localPosition: {rt.localPosition}");
+                    Logger.LogInfo($"║ │  ├─ sizeDelta: {rt.sizeDelta}");
+                    Logger.LogInfo($"║ │  ├─ pivot: {rt.pivot}");
+                    Logger.LogInfo($"║ │  ├─ anchorMin: {rt.anchorMin}");
+                    Logger.LogInfo($"║ │  └─ anchorMax: {rt.anchorMax}");
+                }
+            }
+
+            // 5. 分析所有可能影响布局的自定义组件
+            Logger.LogInfo("║");
+            Logger.LogInfo("║ Custom Layout Components:");
+
+            var allComponents = root.GetComponentsInChildren<MonoBehaviour>(true);
+            var layoutRelatedTypes = new[] { "Layout", "Position", "Scroll", "Fitter", "Align" };
+
+            foreach (var comp in allComponents)
+            {
+                if (comp == null) continue;
+                var typeName = comp.GetType().Name;
+
+                if (layoutRelatedTypes.Any(keyword => typeName.Contains(keyword)))
+                {
+                    Logger.LogInfo($"║ ├─ {typeName} on {GetFullPath(comp.transform)}");
+                    Logger.LogInfo($"║ │  └─ Enabled: {comp.enabled}");
+                }
+            }
+
+            // 6. 分析 Canvas 和 CanvasScaler
+            Logger.LogInfo("║");
+            Logger.LogInfo("║ Canvas Components:");
+            var canvases = root.GetComponentsInChildren<Canvas>(true);
+
+            foreach (var canvas in canvases)
+            {
+                Logger.LogInfo($"║ ├─ Canvas on {GetFullPath(canvas.transform)}");
+                Logger.LogInfo($"║ │  ├─ RenderMode: {canvas.renderMode}");
+                Logger.LogInfo($"║ │  ├─ SortingOrder: {canvas.sortingOrder}");
+
+                var scaler = canvas.GetComponent<CanvasScaler>();
+                if (scaler != null)
+                {
+                    Logger.LogInfo($"║ │  ├─ CanvasScaler.uiScaleMode: {scaler.uiScaleMode}");
+                    Logger.LogInfo($"║ │  ├─ CanvasScaler.scaleFactor: {scaler.scaleFactor}");
+                    Logger.LogInfo($"║ │  └─ CanvasScaler.referenceResolution: {scaler.referenceResolution}");
+                }
+            }
+
+            Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
+        }
+
+
+        // 辅助方法：分析 LayoutGroup
+        private static void AnalyzeLayoutGroup(HorizontalOrVerticalLayoutGroup layout, string typeName)
+        {
+            Logger.LogInfo($"║ ├─ {typeName} on {GetFullPath(layout.transform)}");
+            Logger.LogInfo($"║ │  ├─ Enabled: {layout.enabled}");
+            Logger.LogInfo($"║ │  ├─ Padding: L:{layout.padding.left} R:{layout.padding.right} T:{layout.padding.top} B:{layout.padding.bottom}");
+            Logger.LogInfo($"║ │  ├─ Spacing: {layout.spacing}");
+            Logger.LogInfo($"║ │  ├─ ChildAlignment: {layout.childAlignment}");
+            Logger.LogInfo($"║ │  ├─ ChildControlWidth: {layout.childControlWidth}");
+            Logger.LogInfo($"║ │  ├─ ChildControlHeight: {layout.childControlHeight}");
+            Logger.LogInfo($"║ │  ├─ ChildForceExpandWidth: {layout.childForceExpandWidth}");
+            Logger.LogInfo($"║ │  └─ ChildForceExpandHeight: {layout.childForceExpandHeight}");
+        }
+
+        // 辅助方法：统一分析所有 LayoutGroup
+        private static void AnalyzeLayoutGroupUnified(LayoutGroup layout)
+        {
+            string typeName = layout.GetType().Name;
+            Logger.LogInfo($"║ ├─ {typeName} on {GetFullPath(layout.transform)}");
+            Logger.LogInfo($"║ │  ├─ Enabled: {layout.enabled}");
+            Logger.LogInfo($"║ │  ├─ Padding: L:{layout.padding.left} R:{layout.padding.right} T:{layout.padding.top} B:{layout.padding.bottom}");
+            Logger.LogInfo($"║ │  ├─ ChildAlignment: {layout.childAlignment}");
+
+            // 根据具体类型显示额外信息
+            if (layout is VerticalLayoutGroup vLayout)
+            {
+                Logger.LogInfo($"║ │  ├─ Spacing: {vLayout.spacing}");
+                Logger.LogInfo($"║ │  ├─ ChildControlWidth: {vLayout.childControlWidth}");
+                Logger.LogInfo($"║ │  ├─ ChildControlHeight: {vLayout.childControlHeight}");
+                Logger.LogInfo($"║ │  ├─ ChildForceExpandWidth: {vLayout.childForceExpandWidth}");
+                Logger.LogInfo($"║ │  └─ ChildForceExpandHeight: {vLayout.childForceExpandHeight}");
+            }
+            else if (layout is HorizontalLayoutGroup hLayout)
+            {
+                Logger.LogInfo($"║ │  ├─ Spacing: {hLayout.spacing}");
+                Logger.LogInfo($"║ │  ├─ ChildControlWidth: {hLayout.childControlWidth}");
+                Logger.LogInfo($"║ │  ├─ ChildControlHeight: {hLayout.childControlHeight}");
+                Logger.LogInfo($"║ │  ├─ ChildForceExpandWidth: {hLayout.childForceExpandWidth}");
+                Logger.LogInfo($"║ │  └─ ChildForceExpandHeight: {hLayout.childForceExpandHeight}");
+            }
+            else if (layout is GridLayoutGroup gridLayout)
+            {
+                Logger.LogInfo($"║ │  ├─ CellSize: {gridLayout.cellSize}");
+                Logger.LogInfo($"║ │  ├─ Spacing: {gridLayout.spacing}");
+                Logger.LogInfo($"║ │  ├─ StartCorner: {gridLayout.startCorner}");
+                Logger.LogInfo($"║ │  ├─ StartAxis: {gridLayout.startAxis}");
+                Logger.LogInfo($"║ │  ├─ Constraint: {gridLayout.constraint}");
+                Logger.LogInfo($"║ │  └─ ConstraintCount: {gridLayout.constraintCount}");
+            }
+        }
+
+        // 辅助方法：获取完整路径
+        private static string GetFullPath(Transform transform)
+        {
+            if (transform == null) return "NULL";
+
+            string path = transform.name;
+            Transform current = transform.parent;
+
+            while (current != null)
+            {
+                path = current.name + "/" + path;
+                current = current.parent;
+            }
+
+            return path;
+        }
+
+
     }
 }
