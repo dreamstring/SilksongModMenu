@@ -1,603 +1,1486 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using UnityEngine;
-using UnityEngine.UI;
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
 
-[BepInPlugin("com.yourname.silksongmodmenu", "Silksong Mod Menu", "1.0.0")]
-public class SilksongModMenu : BaseUnityPlugin
+
+namespace ModUINamespace
 {
-    private static MenuScreen modOptionsMenuScreen;
-    private static bool isShowingModMenu = false;
-    internal new static ManualLogSource Logger;
 
-    private void Awake()
+    [BepInPlugin("com.yourname.silksongmodmenu", "Silksong Mod Menu", "1.0.0")]
+    public class SilksongModMenu : BaseUnityPlugin
     {
-        Logger = base.Logger;
-        Logger.LogInfo("Silksong Mod Menu loaded.");
+        private static MenuScreen modOptionsMenuScreen;
+        private static bool isShowingModMenu = false;
+        internal new static ManualLogSource Logger;
+        private static MenuButton modOptionsButton = null;
+        private static Transform modsContentParent;
+        private static GameObject rowPrototype;
 
-        Harmony.CreateAndPatchAll(typeof(SilksongModMenu));
-    }
-
-    [HarmonyPostfix]
-    [HarmonyPatch(typeof(UIManager), "GoToExtrasMenu")]
-    public static void AddModButtonToExtrasMenu(UIManager __instance)
-    {
-        Logger.LogInfo("=== GoToExtrasMenu called ===");
-        __instance.StartCoroutine(AddModButtonCoroutine(__instance));
-    }
-
-    private static IEnumerator AddModButtonCoroutine(UIManager uiManager)
-    {
-        yield return new WaitForSeconds(0.2f);
-        yield return null;
-
-        try
+        private void Awake()
         {
-            MenuScreen extrasMenu = uiManager.extrasMenuScreen;
-            if (extrasMenu == null)
-            {
-                Logger.LogError("Extras menu screen is null");
-                yield break;
-            }
-
-            Logger.LogInfo($"Found extras menu: {extrasMenu.name}");
-
-            // 检查是否已存在Mod按钮
-            Transform existingButton = extrasMenu.transform.Find("ModOptionsButton");
-            if (existingButton != null)
-            {
-                Logger.LogInfo("Mod button already exists, ensuring it's active");
-                existingButton.gameObject.SetActive(true);
-                FixButtonPosition(existingButton.gameObject);
-                yield break;
-            }
-
-            // 查找所有MenuButton组件
-            MenuButton[] allButtons = extrasMenu.GetComponentsInChildren<MenuButton>(true);
-            Logger.LogInfo($"Found {allButtons.Length} MenuButton components in extras menu");
-
-            if (allButtons.Length == 0)
-            {
-                Logger.LogError("No MenuButton components found in extras menu");
-                yield break;
-            }
-
-            // 找到Credits按钮
-            MenuButton creditsButton = null;
-            foreach (MenuButton button in allButtons)
-            {
-                Text refTextComponent = button.GetComponentInChildren<Text>();
-                if (refTextComponent != null && refTextComponent.text.ToLower().Contains("credits"))
-                {
-                    creditsButton = button;
-                    Logger.LogInfo($"Found Credits button: {button.name}");
-                    break;
-                }
-            }
-
-            // 如果没有找到Credits按钮，使用第一个按钮
-            if (creditsButton == null)
-            {
-                creditsButton = allButtons[0];
-                Logger.LogInfo($"Using first button as template: {creditsButton.name}");
-            }
-
-            // 复制按钮
-            GameObject modButtonObj = Object.Instantiate(creditsButton.gameObject, creditsButton.transform.parent);
-            modButtonObj.name = "ModOptionsButton";
-            Logger.LogInfo("Cloned button successfully");
-
-            // 确保按钮激活
-            modButtonObj.SetActive(true);
-
-            // 设置按钮位置 - 在Credits按钮前面
-            int creditsIndex = creditsButton.transform.GetSiblingIndex();
-            modButtonObj.transform.SetSiblingIndex(creditsIndex);
-            Logger.LogInfo($"Placed Mod button at index {creditsIndex}");
-
-            // 获取MenuButton组件
-            MenuButton modButton = modButtonObj.GetComponent<MenuButton>();
-            if (modButton == null)
-            {
-                Logger.LogError("No MenuButton component found on mod button");
-                yield break;
-            }
-
-            // 完全重置按钮组件 - 确保事件被正确劫持
-            ResetButtonComponents(modButtonObj, creditsButton.gameObject);
-
-            // 修改按钮文本
-            Text textComponent = modButtonObj.GetComponentInChildren<Text>();
-            if (textComponent != null)
-            {
-                textComponent.text = "Mod Options";
-                Logger.LogInfo($"Button text set to: {textComponent.text}");
-            }
-
-            // 清除原有事件并设置新的点击事件
-            modButton.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
-            modButton.OnSubmitPressed.AddListener(() => {
-                Logger.LogInfo("=== Mod Options button clicked! ===");
-                OnModButtonClicked(uiManager);
-            });
-
-            // 重置导航设置
-            Navigation navigation = new Navigation();
-            navigation.mode = Navigation.Mode.Automatic;
-            modButton.navigation = navigation;
-
-            // 手动设置位置 - 使用固定偏移量
-            ManualPositionButton(modButtonObj, creditsButton.gameObject);
-
-            // 强制重新构建布局
-            LayoutRebuilder.ForceRebuildLayoutImmediate(modButton.transform.parent as RectTransform);
-            Logger.LogInfo("Layout rebuilt");
-
-            Logger.LogInfo("Mod button added to Extras menu successfully!");
+            Logger = base.Logger;
+            Logger.LogInfo("Silksong Mod Menu loaded.");
+            Harmony.CreateAndPatchAll(typeof(SilksongModMenu));
         }
-        catch (System.Exception e)
-        {
-            Logger.LogError($"Error adding mod button: {e}");
-            Logger.LogError($"Stack trace: {e.StackTrace}");
-        }
-    }
 
-    // 完全重置按钮组件，确保不继承原有功能
-    private static void ResetButtonComponents(GameObject newButton, GameObject templateButton)
-    {
-        try
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(UIManager), "GoToExtrasMenu")]
+        public static void AddModButtonToExtrasMenu(UIManager __instance)
         {
-            Logger.LogInfo("Resetting button components...");
+            Logger.LogInfo("=== GoToExtrasMenu called ===");
 
-            // 移除所有可能的事件监听器
-            var components = newButton.GetComponents<Component>();
-            foreach (var component in components)
+            try
             {
-                if (component is Behaviour behaviour && component != newButton.transform)
+                // 首先检查是否已经存在按钮
+                if (__instance.extrasMenuScreen != null)
                 {
-                    // 保留必要的组件，移除其他可能的事件组件
-                    if (!(behaviour is MenuButton) &&
-                        !(behaviour is CanvasRenderer) &&
-                        !(behaviour is RectTransform) &&
-                        !(behaviour is Image) &&
-                        !(behaviour is Text))
+                    var existingButton = __instance.extrasMenuScreen.transform.Find("ModOptionsButton");
+                    if (existingButton != null)
                     {
-                        Object.Destroy(behaviour);
-                        Logger.LogInfo($"Removed component: {behaviour.GetType().Name}");
+                        Logger.LogInfo("Mod Options button already exists, skipping creation");
+                        existingButton.gameObject.SetActive(true);
+
+                        // 更新静态引用
+                        modOptionsButton = existingButton.GetComponent<MenuButton>();
+                        return;
                     }
                 }
-            }
 
-            // 确保MenuButton组件正确设置
-            MenuButton menuButton = newButton.GetComponent<MenuButton>();
-            if (menuButton != null)
-            {
-                menuButton.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
-                menuButton.interactable = true;
-                Logger.LogInfo("Reset MenuButton component");
-            }
-
-            // 确保按钮尺寸正确
-            RectTransform rectTransform = newButton.GetComponent<RectTransform>();
-            if (rectTransform != null)
-            {
-                RectTransform templateRect = templateButton.GetComponent<RectTransform>();
-                if (templateRect != null)
+                // 检查静态引用是否有效
+                if (modOptionsButton != null && modOptionsButton.gameObject != null)
                 {
-                    rectTransform.anchoredPosition = templateRect.anchoredPosition;
-                    rectTransform.sizeDelta = templateRect.sizeDelta;
-                    rectTransform.anchorMin = templateRect.anchorMin;
-                    rectTransform.anchorMax = templateRect.anchorMax;
-                    rectTransform.pivot = templateRect.pivot;
-                    Logger.LogInfo("Reset RectTransform properties");
+                    Logger.LogInfo("Static reference exists and valid, skipping creation");
+                    modOptionsButton.gameObject.SetActive(true);
+                    return;
+                }
+
+                // 重置引用，准备创建新按钮
+                modOptionsButton = null;
+                __instance.StartCoroutine(AddModButtonCoroutine(__instance));
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"AddModButtonToExtrasMenu error: {e}");
+            }
+        }
+
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(UIManager), "Start")]
+        public static void OnUIManagerStartPost(UIManager __instance)
+        {
+            try
+            {
+                // 检查这是否是有效的UIManager实例
+                if (__instance != null && __instance == UIManager.instance)
+                {
+                    Logger.LogInfo("UIManager Start completed, resetting mod menu state");
+
+                    // 只重置我们的状态，不影响游戏逻辑
+                    ResetModMenuState();
                 }
             }
-
-            // 移除本地化组件
-            AutoLocalizeTextUI localizeText = newButton.GetComponentInChildren<AutoLocalizeTextUI>();
-            if (localizeText != null)
+            catch (Exception e)
             {
-                Object.Destroy(localizeText);
-                Logger.LogInfo("Removed AutoLocalizeTextUI component");
+                Logger.LogError($"OnUIManagerStartPost error: {e}");
             }
-
-            Logger.LogInfo("Button components reset successfully");
         }
-        catch (System.Exception e)
-        {
-            Logger.LogError($"Error resetting button components: {e}");
-        }
-    }
 
-    // 手动定位按钮 - 使用固定偏移量
-    private static void ManualPositionButton(GameObject button, GameObject referenceButton)
-    {
-        try
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(UIManager), "OnDestroy")]
+        public static void OnUIManagerDestroyPost(UIManager __instance)
         {
-            RectTransform buttonRect = button.GetComponent<RectTransform>();
-            RectTransform referenceRect = referenceButton.GetComponent<RectTransform>();
-
-            if (buttonRect == null || referenceRect == null)
+            try
             {
-                Logger.LogError("Cannot manually position - missing RectTransform components");
+                Logger.LogInfo("UIManager OnDestroy completed, cleaning up mod menu");
+
+                // 安全清理我们的组件
+                SafeCleanupModMenu();
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"OnUIManagerDestroyPost error: {e}");
+            }
+        }
+
+        private static void ResetModMenuState()
+        {
+            try
+            {
+                Logger.LogInfo("Resetting mod menu state...");
+
+                // 检查现有引用是否还有效
+                if (modOptionsButton != null && modOptionsButton.gameObject == null)
+                {
+                    modOptionsButton = null;
+                }
+
+                if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject == null)
+                {
+                    modOptionsMenuScreen = null;
+                }
+
+                isShowingModMenu = false;
+
+                Logger.LogInfo("Mod menu state reset completed");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"ResetModMenuState error: {e}");
+            }
+        }
+
+        private static void SafeCleanupModMenu()
+        {
+            try
+            {
+                Logger.LogInfo("Safe cleanup of mod menu...");
+
+                // 安全销毁我们创建的对象
+                if (modOptionsButton != null && modOptionsButton.gameObject != null)
+                {
+                    Destroy(modOptionsButton.gameObject);
+                }
+                modOptionsButton = null;
+
+                if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject != null)
+                {
+                    Destroy(modOptionsMenuScreen.gameObject);
+                }
+                modOptionsMenuScreen = null;
+
+                isShowingModMenu = false;
+                modsContentParent = null;
+                rowPrototype = null;
+
+                Logger.LogInfo("Safe cleanup completed");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"SafeCleanupModMenu error: {e}");
+            }
+        }
+
+        // 添加安全的引用重置方法
+        private static bool IsModButtonValid()
+        {
+            try
+            {
+                return modOptionsButton != null &&
+                       modOptionsButton.gameObject != null &&
+                       modOptionsButton.gameObject.activeInHierarchy;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static void ResetModButtonReference()
+        {
+            try
+            {
+                if (modOptionsButton != null && modOptionsButton.gameObject == null)
+                {
+                    Logger.LogInfo("Mod button GameObject was destroyed, resetting reference");
+                    modOptionsButton = null;
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"Error checking mod button reference: {e.Message}");
+                modOptionsButton = null;
+            }
+        }
+
+
+        private static IEnumerator AddModButtonCoroutine(UIManager uiManager)
+        {
+            yield return new WaitForSeconds(0.2f);
+            yield return null;
+
+            try
+            {
+                // 检查是否已经创建过
+                if (modOptionsButton != null && modOptionsButton.gameObject != null)
+                {
+                    Logger.LogInfo("Button already exists in coroutine, skipping creation");
+                    yield break;
+                }
+
+                var extrasMenu = uiManager.extrasMenuScreen;
+                if (extrasMenu == null)
+                {
+                    Logger.LogError("Cannot find extrasMenuScreen");
+                    yield break;
+                }
+
+                var existingButton = extrasMenu.transform.Find("ModOptionsButton");
+                if (existingButton != null)
+                {
+                    Logger.LogInfo("Found existing ModOptionsButton in transform, updating reference");
+                    modOptionsButton = existingButton.GetComponent<MenuButton>();
+                    yield break;
+                }
+
+                Logger.LogInfo($"Found extras menu: {extrasMenu.name}");
+
+                var menuButtons = extrasMenu.GetComponentsInChildren<MenuButton>(true);
+                Logger.LogInfo($"Found {menuButtons.Length} MenuButton components in extras menu");
+
+                var creditsButton = menuButtons.FirstOrDefault(mb => mb.name.Contains("Credits"));
+                if (creditsButton == null)
+                {
+                    Logger.LogError("Cannot find Credits button template");
+                    yield break;
+                }
+
+                Logger.LogInfo($"Using button as template: {creditsButton.name}");
+
+                var modButtonObj = Instantiate(creditsButton.gameObject, creditsButton.transform.parent);
+                modButtonObj.name = "ModOptionsButton";
+                modButtonObj.SetActive(true);
+                modButtonObj.transform.SetSiblingIndex(creditsButton.transform.GetSiblingIndex());
+
+                // 完全清理按钮事件
+                CompletelyCleanButton(modButtonObj);
+
+                // 获取MenuButton组件
+                modOptionsButton = modButtonObj.GetComponent<MenuButton>();
+                if (modOptionsButton == null)
+                {
+                    Logger.LogError("Failed to get MenuButton component");
+                    yield break;
+                }
+
+                // 设置文本
+                var textComponent = modButtonObj.GetComponentInChildren<Text>();
+                if (textComponent != null)
+                {
+                    textComponent.text = "MOD OPTIONS";
+                }
+
+                // 只添加我们的事件
+                modOptionsButton.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
+                modOptionsButton.OnSubmitPressed.AddListener(() =>
+                {
+                    Logger.LogInfo("=== Mod Options button clicked! ===");
+                    ShowModOptionsMenu(uiManager);
+                });
+
+                // 手动定位
+                var rectTransform = modButtonObj.GetComponent<RectTransform>();
+                if (rectTransform != null)
+                {
+                    float yOffset = -100f;
+                    rectTransform.anchoredPosition = new Vector2(0, yOffset);
+                    Logger.LogInfo($"Manually positioned button at: ({rectTransform.anchoredPosition.x:F2}, {rectTransform.anchoredPosition.y:F2}) (offset: {yOffset}f)");
+                }
+
+                Logger.LogInfo("Mod button added to Extras menu successfully!");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"Error adding mod button: {e}");
+            }
+        }
+        private static void CompletelyCleanButton(GameObject buttonObj)
+        {
+            try
+            {
+                Logger.LogInfo($"Completely cleaning button: {buttonObj.name}");
+
+                // 清理所有可能的事件监听器
+                var allComponents = buttonObj.GetComponentsInChildren<Component>(true);
+
+                foreach (var comp in allComponents)
+                {
+                    if (comp == null) continue;
+
+                    // 清理Button组件
+                    if (comp is Button btn)
+                    {
+                        Logger.LogInfo($"Clearing Button.onClick on {btn.gameObject.name}");
+                        btn.onClick.RemoveAllListeners();
+                        btn.onClick = new Button.ButtonClickedEvent();
+                    }
+
+                    // 清理MenuButton组件
+                    if (comp is MenuButton mb)
+                    {
+                        Logger.LogInfo($"Clearing MenuButton events on {mb.gameObject.name}");
+
+                        // 清理OnSubmitPressed
+                        if (mb.OnSubmitPressed != null)
+                        {
+                            mb.OnSubmitPressed.RemoveAllListeners();
+                        }
+                        mb.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
+
+                        // 使用反射清理所有UnityEvent字段
+                        try
+                        {
+                            var type = mb.GetType();
+                            var fields = type.GetFields(System.Reflection.BindingFlags.Public |
+                                                       System.Reflection.BindingFlags.NonPublic |
+                                                       System.Reflection.BindingFlags.Instance);
+
+                            foreach (var field in fields)
+                            {
+                                if (typeof(UnityEngine.Events.UnityEventBase).IsAssignableFrom(field.FieldType))
+                                {
+                                    var unityEvent = field.GetValue(mb) as UnityEngine.Events.UnityEventBase;
+                                    if (unityEvent != null)
+                                    {
+                                        Logger.LogInfo($"Clearing UnityEvent field: {field.Name}");
+                                        unityEvent.RemoveAllListeners();
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.LogWarning($"Reflection cleanup error: {e.Message}");
+                        }
+                    }
+
+                    // 清理EventTrigger组件
+                    if (comp is UnityEngine.EventSystems.EventTrigger trigger)
+                    {
+                        Logger.LogInfo($"Clearing EventTrigger on {trigger.gameObject.name}");
+                        if (trigger.triggers != null)
+                        {
+                            trigger.triggers.Clear();
+                        }
+                    }
+                }
+
+                // 处理本地化组件的依赖关系
+                var localizers = buttonObj.GetComponentsInChildren<AutoLocalizeTextUI>(true);
+                foreach (var loc in localizers)
+                {
+                    if (loc != null)
+                    {
+                        Logger.LogInfo($"Removing AutoLocalizeTextUI from {loc.gameObject.name}");
+
+                        // 先检查依赖关系
+                        var platformLoc = loc.GetComponent<PlatformSpecificLocalisation>();
+                        if (platformLoc != null)
+                        {
+                            Logger.LogInfo($"Also removing PlatformSpecificLocalisation from {loc.gameObject.name}");
+                            Destroy(platformLoc);
+                        }
+
+                        Destroy(loc);
+                    }
+                }
+
+                Logger.LogInfo($"Button completely cleaned: {buttonObj.name}");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"CompletelyCleanButton error: {e}");
+            }
+        }
+
+
+
+        // 轻度清理 - 用于Extras按钮（保留更多原生功能）
+        private static void LightSanitizeButton(GameObject go)
+        {
+            try
+            {
+                Logger.LogInfo($"Light sanitize: {go.name}");
+
+                // 只清理Button.onClick
+                foreach (var btn in go.GetComponentsInChildren<Button>(true))
+                    btn.onClick.RemoveAllListeners();
+
+                // 只清理MenuButton.OnSubmitPressed
+                foreach (var mb in go.GetComponentsInChildren<MenuButton>(true))
+                {
+                    if (mb.OnSubmitPressed != null)
+                        mb.OnSubmitPressed.RemoveAllListeners();
+                }
+
+                // 移除本地化
+                foreach (var loc in go.GetComponentsInChildren<AutoLocalizeTextUI>(true))
+                    if (loc != null) Destroy(loc);
+
+                Logger.LogInfo($"Light sanitize completed: {go.name}");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"LightSanitizeButton error: {e}");
+            }
+        }
+
+        // 重度清理 - 用于Mod菜单（移除更多危险组件）
+        private static void HeavySanitizeMenu(GameObject go)
+        {
+            try
+            {
+                Logger.LogInfo($"Heavy sanitize: {go.name}");
+
+                // 移除所有危险的游戏设置相关组件
+                string[] dangerousComponents = {
+            "GameMenuOptions",
+            "MenuOptionHorizontal",
+            "MenuOptionToggle",
+            "ControlReminder"
+        };
+
+                foreach (var mb in go.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (mb == null) continue;
+                    var typeName = mb.GetType().Name;
+                    if (dangerousComponents.Any(d => typeName.Contains(d)))
+                    {
+                        Logger.LogInfo($"Destroying dangerous component: {typeName}");
+                        Destroy(mb);
+                    }
+                }
+
+                // 清理所有Button事件
+                foreach (var btn in go.GetComponentsInChildren<Button>(true))
+                    btn.onClick.RemoveAllListeners();
+
+                // 清理所有MenuButton事件
+                foreach (var mb in go.GetComponentsInChildren<MenuButton>(true))
+                {
+                    if (mb.OnSubmitPressed != null)
+                        mb.OnSubmitPressed.RemoveAllListeners();
+                }
+
+                // 移除本地化
+                foreach (var loc in go.GetComponentsInChildren<AutoLocalizeTextUI>(true))
+                    if (loc != null) Destroy(loc);
+
+                Logger.LogInfo($"Heavy sanitize completed: {go.name}");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"HeavySanitizeMenu error: {e}");
+            }
+        }
+
+
+
+        [HarmonyPostfix]
+        [HarmonyPatch(typeof(UIManager), "GoToExtrasContentMenu")]
+        public static void OnReturnToExtrasMenu(UIManager __instance)
+        {
+            Logger.LogInfo("=== Returning to Extras Menu ===");
+            __instance.StartCoroutine(EnsureModButtonExists(__instance));
+        }
+
+        private static IEnumerator EnsureModButtonExists(UIManager uiManager)
+        {
+            yield return new WaitForSeconds(0.1f);
+            yield return null;
+
+            var extrasMenu = uiManager.extrasMenuScreen;
+            if (extrasMenu != null)
+            {
+                var modButton = extrasMenu.transform.Find("ModOptionsButton");
+                if (modButton != null)
+                {
+                    modButton.gameObject.SetActive(true);
+                    FixButtonPosition(modButton.gameObject);
+                }
+                else
+                {
+                    Logger.LogWarning("Mod button not found when returning from content menu, recreating");
+                    uiManager.StartCoroutine(AddModButtonCoroutine(uiManager));
+                }
+            }
+        }
+
+        private static void OnModButtonClicked(UIManager uiManager)
+        {
+            if (isShowingModMenu) return;
+            ShowModOptionsMenu(uiManager);
+        }
+
+        private static void ShowModOptionsMenu(UIManager uiManager)
+        {
+            Logger.LogInfo("Showing Mod Options menu...");
+
+            if (modOptionsMenuScreen == null)
+            {
+                CreateModOptionsMenu(uiManager);
+            }
+            BuildModsList();
+
+            uiManager.StartCoroutine(ShowModMenuCoroutine(uiManager));
+        }
+
+        private static void CreateModOptionsMenu(UIManager uiManager)
+        {
+            Logger.LogInfo("Creating Mod Options menu (non-destructive)...");
+
+            var templateMenu = uiManager.gameOptionsMenuScreen;
+            if (templateMenu == null)
+            {
+                Logger.LogError("Cannot find gameOptionsMenuScreen template");
                 return;
             }
 
-            // 使用固定偏移量 -100f
-            buttonRect.anchoredPosition = new Vector2(
-                referenceRect.anchoredPosition.x,
-                referenceRect.anchoredPosition.y - 100f
-            );
-
-            Logger.LogInfo($"Manually positioned button at: {buttonRect.anchoredPosition} (offset: -100f)");
-        }
-        catch (System.Exception e)
-        {
-            Logger.LogError($"Error in manual positioning: {e}");
-        }
-    }
-
-    // 修复按钮位置
-    private static void FixButtonPosition(GameObject button)
-    {
-        try
-        {
-            RectTransform buttonRect = button.GetComponent<RectTransform>();
-            if (buttonRect == null) return;
-
-            // 查找其他按钮作为参考
-            MenuButton[] siblings = button.transform.parent.GetComponentsInChildren<MenuButton>()
-                .Where(b => b.gameObject != button && b.gameObject.activeInHierarchy)
-                .ToArray();
-
-            if (siblings.Length > 0)
+            var modMenuObj = Instantiate(templateMenu.gameObject, templateMenu.transform.parent);
+            modMenuObj.name = "ModOptionsMenuScreen";
+            modOptionsMenuScreen = modMenuObj.GetComponent<MenuScreen>();
+            if (modOptionsMenuScreen == null)
             {
-                RectTransform siblingRect = siblings[0].GetComponent<RectTransform>();
-                if (siblingRect != null)
+                Logger.LogError("Failed to get MenuScreen component from cloned object");
+                return;
+            }
+
+            DisableMenuButtonList(modMenuObj);
+            UpdateMenuTitleToMod(modMenuObj, uiManager);
+            HeavySanitizeMenu(modMenuObj);
+
+            // Back按钮处理
+            // 修改CreateModOptionsMenu中的Back按钮处理
+            if (modOptionsMenuScreen.backButton != null)
+            {
+                Logger.LogInfo("Setting up Back button...");
+
+                // 彻底清理Back按钮 - 使用CompletelyCleanButton而不是LightSanitizeButton
+                CompletelyCleanButton(modOptionsMenuScreen.backButton.gameObject);
+
+                // 额外清理：直接清理MenuButton的所有可能事件
+                var backMenuButton = modOptionsMenuScreen.backButton;
+
+                // 清理所有可能的UnityEvent
+                try
                 {
-                    // 使用固定偏移量 -100f
-                    buttonRect.anchoredPosition = new Vector2(
-                        siblingRect.anchoredPosition.x,
-                        siblingRect.anchoredPosition.y - 100f
-                    );
-                    Logger.LogInfo($"Fixed button position: {buttonRect.anchoredPosition} (offset: -100f)");
+                    var type = backMenuButton.GetType();
+                    var fields = type.GetFields(System.Reflection.BindingFlags.Public |
+                                               System.Reflection.BindingFlags.NonPublic |
+                                               System.Reflection.BindingFlags.Instance);
+
+                    foreach (var field in fields)
+                    {
+                        if (typeof(UnityEngine.Events.UnityEventBase).IsAssignableFrom(field.FieldType))
+                        {
+                            var unityEvent = field.GetValue(backMenuButton) as UnityEngine.Events.UnityEventBase;
+                            if (unityEvent != null)
+                            {
+                                Logger.LogInfo($"Clearing Back button UnityEvent field: {field.Name}");
+                                unityEvent.RemoveAllListeners();
+                            }
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Logger.LogWarning($"Back button reflection cleanup error: {e.Message}");
+                }
+
+                // 重新创建OnSubmitPressed事件
+                backMenuButton.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
+                backMenuButton.OnSubmitPressed.AddListener(() =>
+                {
+                    Logger.LogInfo("=== Back button clicked - returning to Extras menu ===");
+                    uiManager.StartCoroutine(ReturnToExtrasMenuCoroutine(uiManager));
+                });
+
+                modOptionsMenuScreen.defaultHighlight = modOptionsMenuScreen.backButton;
+                Logger.LogInfo("Back button setup completed");
+            }
+
+            // 内容区域：找到语言选项的父容器作为“行原型容器”
+            SetupModsContent(modMenuObj);
+
+            // 不再放“安全占位行”，让 BuildModsList 直接填充
+            modMenuObj.SetActive(false);
+            Logger.LogInfo("Mod Options menu created (animations/navigation preserved)");
+        }
+
+        private static void DisableMenuButtonList(GameObject menuObj)
+        {
+            try
+            {
+                var menuButtonList = menuObj.GetComponent<MenuButtonList>();
+                if (menuButtonList != null)
+                {
+                    Logger.LogInfo("Destroying MenuButtonList to prevent crashes");
+                    // 直接销毁，最简单有效
+                    Destroy(menuButtonList);
+                }
+
+                // 也检查子对象中的MenuButtonList
+                var childMenuButtonLists = menuObj.GetComponentsInChildren<MenuButtonList>(true);
+                foreach (var mbl in childMenuButtonLists)
+                {
+                    if (mbl != null)
+                    {
+                        Logger.LogInfo($"Destroying child MenuButtonList on {mbl.gameObject.name}");
+                        Destroy(mbl);
+                    }
                 }
             }
-        }
-        catch (System.Exception e)
-        {
-            Logger.LogError($"Error fixing button position: {e}");
-        }
-    }
-
-    [HarmonyPostfix]
-    [HarmonyPatch(typeof(UIManager), "GoToExtrasContentMenu")]
-    public static void OnReturnToExtrasMenu(UIManager __instance)
-    {
-        Logger.LogInfo("=== Returning to Extras Menu ===");
-        __instance.StartCoroutine(EnsureModButtonExists(__instance));
-    }
-
-    private static IEnumerator EnsureModButtonExists(UIManager uiManager)
-    {
-        yield return new WaitForSeconds(0.1f);
-        yield return null;
-
-        MenuScreen extrasMenu = uiManager.extrasMenuScreen;
-        if (extrasMenu != null)
-        {
-            Transform modButton = extrasMenu.transform.Find("ModOptionsButton");
-            if (modButton != null)
+            catch (Exception e)
             {
-                Logger.LogInfo("Ensuring Mod button is active after returning from content menu");
-                modButton.gameObject.SetActive(true);
+                Logger.LogError($"DisableMenuButtonList error: {e}");
+            }
+        }
 
-                // 确保按钮位置正确
-                FixButtonPosition(modButton.gameObject);
+
+        private static void PreciseStripDangerousBehaviours(GameObject root)
+        {
+            try
+            {
+                string[] risky = {
+            "GameMenuOptions",            // 游戏设置逻辑
+            "MenuOptionHorizontal",       // 具体设置选项（左右切换）逻辑
+            "MenuOptionToggle"            // 具体开关逻辑
+        };
+
+                foreach (var mb in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (mb == null) continue;
+                    var tn = mb.GetType().Name;
+                    if (risky.Any(r => tn.Contains(r)))
+                    {
+                        UnityEngine.Object.Destroy(mb);
+                    }
+                }
+
+                // 注意：不要清空 Button.onClick / EventTrigger 全局！
+                // 仅对即将被我们接管的“行”做最小改动（在 CreateModRow 内部处理）
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"PreciseStripDangerousBehaviours error: {e}");
+            }
+        }
+
+
+        // 这个函数太危险，直接删除或改成：
+        private static void SafeStripDangerousOnly(GameObject go)
+        {
+            try
+            {
+                // 只移除会修改游戏设置的脚本
+                string[] dangerousOnly = {
+                    "GameMenuOptions",      // 游戏设置逻辑
+                    "MenuOptionHorizontal", // 具体选项逻辑  
+                    "MenuOptionToggle"      // 开关逻辑
+                };
+
+                foreach (var mb in go.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if (mb == null) continue;
+                    var tn = mb.GetType().Name;
+                    if (dangerousOnly.Any(d => tn.Contains(d)))
+                    {
+                        Destroy(mb);
+                    }
+                }
+
+                // 只清理Button.onClick，不要清理EventTrigger
+                foreach (var btn in go.GetComponentsInChildren<Button>(true))
+                    btn.onClick.RemoveAllListeners();
+
+                // 不要销毁EventTrigger
+                // foreach (var trig in go.GetComponentsInChildren<UnityEngine.EventSystems.EventTrigger>(true))
+                //     Destroy(trig);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"SafeStripDangerousOnly error: {e}");
+            }
+        }
+
+
+        private static void SetupModsContent(GameObject menuObj)
+        {
+            modsContentParent = FindContentParent(menuObj);
+            if (modsContentParent == null)
+            {
+                Logger.LogError("Content parent not found.");
+                return;
+            }
+
+            // 清空已有行（避免残留原设置项），但不要破坏父布局组件
+            for (int i = modsContentParent.childCount - 1; i >= 0; i--)
+            {
+                var child = modsContentParent.GetChild(i).gameObject;
+                Destroy(child);
+            }
+
+            // 新的 rowPrototype：语言选项那一行的父容器
+            var gmo = menuObj.GetComponentInChildren<GameMenuOptions>(true);
+            if (gmo != null && gmo.languageOption != null)
+            {
+                var p = gmo.languageOption.transform.parent;
+                if (p != null)
+                {
+                    rowPrototype = p.gameObject;
+                }
+            }
+
+            // 如果拿不到，兜底用通用 MenuSelectable 行或合成
+            if (rowPrototype == null)
+            {
+                var anySel = menuObj.GetComponentsInChildren<MenuSelectable>(true).FirstOrDefault();
+                if (anySel != null)
+                {
+                    var p = anySel.transform.parent;
+                    rowPrototype = p ? p.gameObject : anySel.gameObject;
+                }
+            }
+            if (rowPrototype == null)
+            {
+                rowPrototype = SynthesizeSimpleRow(modsContentParent);
+            }
+
+            // 关键：不要禁用 rowPrototype 上的脚本，也不要 Sanitize。
+            rowPrototype.SetActive(false);
+            if (rowPrototype.transform.parent != modsContentParent)
+                rowPrototype.transform.SetParent(modsContentParent, false);
+        }
+
+        // === 新增：查找行原型（语言选项父节点或任意 MenuSelectable 父节点） ===
+        private static GameObject FindRowPrototype(Transform root)
+        {
+            var gmo = root.GetComponentInChildren<GameMenuOptions>(true);
+            if (gmo != null && gmo.languageOption != null)
+            {
+                var p = gmo.languageOption.transform.parent;
+                if (p != null) return p.gameObject;
+            }
+
+            var anySel = root.GetComponentsInChildren<MenuSelectable>(true).FirstOrDefault();
+            if (anySel != null)
+            {
+                var p = anySel.transform.parent;
+                return p ? p.gameObject : anySel.gameObject;
+            }
+
+            return null;
+        }
+
+        // === 新增：合成行原型（兜底） ===
+        private static GameObject SynthesizeSimpleRow(Transform parent)
+        {
+            var row = new GameObject("RowPrototype", typeof(RectTransform), typeof(Image));
+            var rt = (RectTransform)row.transform;
+            rt.SetParent(parent, false);
+            rt.sizeDelta = new Vector2(0, 52);
+            var bg = row.GetComponent<Image>();
+            bg.color = new Color(1, 1, 1, 0.05f);
+
+            var labelGO = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            var lrt = (RectTransform)labelGO.transform;
+            lrt.SetParent(row.transform, false);
+            lrt.anchorMin = new Vector2(0, 0.5f);
+            lrt.anchorMax = new Vector2(0, 0.5f);
+            lrt.pivot = new Vector2(0, 0.5f);
+            lrt.anchoredPosition = new Vector2(20, 0);
+            var anyText = parent.GetComponentInChildren<Text>(true);
+            var ltxt = labelGO.GetComponent<Text>();
+            if (anyText && anyText.font) ltxt.font = anyText.font;
+            ltxt.fontSize = anyText ? Mathf.Max(22, anyText.fontSize - 4) : 24;
+            ltxt.color = Color.white;
+            ltxt.text = "Label";
+
+            var right = new GameObject("RightButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            var rrt = (RectTransform)right.transform;
+            rrt.SetParent(row.transform, false);
+            rrt.anchorMin = new Vector2(1, 0.5f);
+            rrt.anchorMax = new Vector2(1, 0.5f);
+            rrt.pivot = new Vector2(1, 0.5f);
+            rrt.sizeDelta = new Vector2(160, 40);
+            rrt.anchoredPosition = new Vector2(-20, 0);
+
+            var btTextGO = new GameObject("Text", typeof(RectTransform), typeof(Text));
+            var btrt = (RectTransform)btTextGO.transform;
+            btrt.SetParent(right.transform, false);
+            btrt.anchorMin = btrt.anchorMax = new Vector2(0.5f, 0.5f);
+            btrt.pivot = new Vector2(0.5f, 0.5f);
+            var btxt = btTextGO.GetComponent<Text>();
+            if (anyText && anyText.font) btxt.font = anyText.font;
+            btxt.fontSize = anyText ? Mathf.Max(20, anyText.fontSize - 6) : 22;
+            btxt.color = Color.white;
+            btxt.text = "On";
+
+            return row;
+        }
+
+        // === 新增：构建 Mod 列表 ===
+        private static void BuildModsList()
+        {
+            if (modOptionsMenuScreen == null) return;
+            if (modsContentParent == null || rowPrototype == null)
+            {
+                Logger.LogWarning("BuildModsList: content or rowPrototype missing, trying SetupModsContent again.");
+                SetupModsContent(modOptionsMenuScreen.gameObject);
+                if (modsContentParent == null || rowPrototype == null)
+                {
+                    Logger.LogError("BuildModsList failed: content parent or row prototype is null.");
+                    return;
+                }
+            }
+
+            // 清除旧行（保留原型）
+            for (int i = modsContentParent.childCount - 1; i >= 0; i--)
+            {
+                var child = modsContentParent.GetChild(i).gameObject;
+                if (child == rowPrototype) continue;
+                Destroy(child);
+            }
+
+            var mods = DiscoverLoadedPluginsForList();
+            if (mods.Count == 0)
+            {
+                CreateHintRow("No mods detected.");
             }
             else
             {
-                Logger.LogWarning("Mod button not found when returning from content menu, recreating");
-                uiManager.StartCoroutine(AddModButtonCoroutine(uiManager));
+                foreach (var m in mods)
+                    CreateModRow_UseLanguageStyle(m.displayName, m.enabled, m.onToggle);
+            }
+
+            var rt = modsContentParent as RectTransform;
+            if (rt) LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+        }
+
+        private static void CreateModRow_UseLanguageStyle(string label, bool initial, Action<bool> onChanged)
+        {
+            var row = UnityEngine.Object.Instantiate(rowPrototype, modsContentParent);
+            row.name = "Row_" + label;
+            row.SetActive(true);
+
+            // 更精确的文本识别方法
+            Text leftLabel = null;
+            Text rightValue = null;
+
+            var texts = row.GetComponentsInChildren<Text>(true);
+            if (texts != null && texts.Length > 0)
+            {
+                // 方法1：按层级顺序识别（通常第一个是标签，第二个是值）
+                if (texts.Length >= 2)
+                {
+                    leftLabel = texts[0];
+                    rightValue = texts[1];
+                }
+                else if (texts.Length == 1)
+                {
+                    leftLabel = texts[0];
+                }
+
+                // 方法2：如果方法1不准确，按RectTransform的实际屏幕位置判断
+                if (texts.Length >= 2)
+                {
+                    var sortedByX = texts.OrderBy(t => {
+                        var rt = t.GetComponent<RectTransform>();
+                        if (rt != null)
+                        {
+                            Vector3[] corners = new Vector3[4];
+                            rt.GetWorldCorners(corners);
+                            return corners[0].x; // 左下角的x坐标
+                        }
+                        return 0f;
+                    }).ToArray();
+
+                    leftLabel = sortedByX[0];
+                    rightValue = sortedByX[sortedByX.Length - 1];
+                }
+            }
+
+            // 设置文本内容
+            if (leftLabel != null)
+            {
+                leftLabel.text = label;
+                // 移除标签的本地化
+                var loc = leftLabel.GetComponent<AutoLocalizeTextUI>();
+                if (loc) Destroy(loc);
+            }
+
+            if (rightValue != null)
+            {
+                rightValue.text = initial ? "On" : "Off";
+                // 移除值的本地化
+                var loc = rightValue.GetComponent<AutoLocalizeTextUI>();
+                if (loc) Destroy(loc);
+            }
+
+            // 交互逻辑保持不变...
+            var selectable = row.GetComponentInChildren<Selectable>(true);
+            if (selectable != null)
+            {
+                var btn = row.GetComponentInChildren<Button>(true);
+                if (btn == null)
+                {
+                    btn = row.GetComponent<Button>();
+                    if (btn == null) btn = row.AddComponent<Button>();
+                    if (btn.transition == Selectable.Transition.None)
+                        btn.transition = Selectable.Transition.ColorTint;
+                }
+
+                bool state = initial;
+                void Refresh()
+                {
+                    if (rightValue) rightValue.text = state ? "On" : "Off";
+                }
+                Refresh();
+
+                btn.onClick.RemoveAllListeners();
+                btn.onClick.AddListener(() =>
+                {
+                    state = !state;
+                    Refresh();
+                    try { onChanged?.Invoke(state); }
+                    catch (Exception e) { Logger.LogError($"Toggle handler error for {label}: {e}"); }
+                });
+
+                if (selectable.navigation.mode != Navigation.Mode.Explicit)
+                {
+                    var nav = new Navigation { mode = Navigation.Mode.Explicit };
+                    selectable.navigation = nav;
+                }
+
             }
         }
-    }
 
-    private static void OnModButtonClicked(UIManager uiManager)
-    {
-        if (isShowingModMenu) return;
 
-        Logger.LogInfo("Mod Options button was clicked!");
-        ShowModOptionsMenu(uiManager);
-    }
-
-    private static void ShowModOptionsMenu(UIManager uiManager)
-    {
-        Logger.LogInfo("Showing Mod Options menu...");
-
-        // 如果菜单不存在，创建它
-        if (modOptionsMenuScreen == null)
+        // === 新增：Mod 数据源 ===
+        private struct PluginItem
         {
-            CreateModOptionsMenu(uiManager);
+            public string displayName;
+            public bool enabled;
+            public Action<bool> onToggle;
         }
 
-        // 显示菜单
-        uiManager.StartCoroutine(ShowModMenuCoroutine(uiManager));
-    }
-
-    private static void CreateModOptionsMenu(UIManager uiManager)
-    {
-        Logger.LogInfo("Creating Mod Options menu...");
-
-        // 使用gameOptionsMenuScreen作为模板
-        MenuScreen templateMenu = uiManager.gameOptionsMenuScreen;
-        if (templateMenu == null)
+        private static List<PluginItem> DiscoverLoadedPluginsForList()
         {
-            Logger.LogError("Cannot find gameOptionsMenuScreen template");
-            return;
+            var list = new List<PluginItem>();
+            try
+            {
+                foreach (var kv in BepInEx.Bootstrap.Chainloader.PluginInfos)
+                {
+                    var pi = kv.Value;
+                    if (pi?.Metadata == null) continue;
+                    if (pi.Metadata.GUID == "com.yourname.silksongmodmenu") continue;
+
+                    var name = string.IsNullOrEmpty(pi.Metadata.Name) ? pi.Metadata.GUID : pi.Metadata.Name;
+
+                    list.Add(new PluginItem
+                    {
+                        displayName = name,
+                        enabled = true, // 可接入配置保存真实状态
+                        onToggle = v =>
+                        {
+                            Logger.LogInfo($"[Mod Toggle] {name} -> {(v ? "On" : "Off")}");
+                            // TODO: 写配置/调用 API
+                        }
+                    });
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"DiscoverLoadedPluginsForList error: {e}");
+            }
+
+            return list.OrderBy(p => p.displayName).ToList();
         }
 
-        // 克隆模板
-        GameObject modMenuObj = Object.Instantiate(templateMenu.gameObject, templateMenu.transform.parent);
-        modMenuObj.name = "ModOptionsMenuScreen";
-        modOptionsMenuScreen = modMenuObj.GetComponent<MenuScreen>();
-
-        if (modOptionsMenuScreen == null)
+        // === 新增：创建 SectionHeader / 提示行 ===
+        private static void CreateSectionHeader(string title)
         {
-            Logger.LogError("Failed to get MenuScreen component from cloned object");
-            return;
+            var refText = modOptionsMenuScreen.GetComponentsInChildren<Text>(true)
+                .OrderByDescending(t => t.fontSize).FirstOrDefault();
+
+            GameObject header = new GameObject("SectionHeader", typeof(RectTransform), typeof(Text));
+            header.transform.SetParent(modsContentParent, false);
+            var txt = header.GetComponent<Text>();
+            txt.text = title;
+            txt.fontSize = refText ? Mathf.Max(22, refText.fontSize - 6) : 26;
+            txt.color = Color.white;
+            if (refText && refText.font) txt.font = refText.font;
         }
 
-        // 设置CanvasGroup - 确保正确设置
-        CanvasGroup canvasGroup = modOptionsMenuScreen.GetComponent<CanvasGroup>();
-        if (canvasGroup == null)
+        private static void CreateHintRow(string hint)
         {
-            canvasGroup = modMenuObj.AddComponent<CanvasGroup>();
+            var baseText = modOptionsMenuScreen.GetComponentsInChildren<Text>(true).FirstOrDefault();
+            var go = new GameObject("HintRow", typeof(RectTransform), typeof(Text));
+            go.transform.SetParent(modsContentParent, false);
+            var txt = go.GetComponent<Text>();
+            txt.text = hint;
+            txt.fontSize = baseText ? Mathf.Max(18, baseText.fontSize - 6) : 20;
+            txt.color = new Color(1, 1, 1, 0.6f);
+            if (baseText && baseText.font) txt.font = baseText.font;
         }
-        canvasGroup.alpha = 0f;
-        canvasGroup.interactable = false;
-        canvasGroup.blocksRaycasts = false;
 
-        // 修改标题
-        UpdateMenuTitle(modMenuObj);
-
-        // 设置返回按钮 - 完全劫持事件
-        if (modOptionsMenuScreen.backButton != null)
+        // === 新增：创建单个 Mod 行 ===
+        private static void CreateModRow(string label, bool initial, Action<bool> onChanged)
         {
-            // 完全重置返回按钮
-            ResetButtonComponents(modOptionsMenuScreen.backButton.gameObject, modOptionsMenuScreen.backButton.gameObject);
+            var row = UnityEngine.Object.Instantiate(rowPrototype, modsContentParent);
+            row.name = "Row_" + label;
+            row.SetActive(true);
 
-            modOptionsMenuScreen.backButton.OnSubmitPressed = new UnityEngine.Events.UnityEvent();
-            modOptionsMenuScreen.backButton.OnSubmitPressed.AddListener(() => {
-                Logger.LogInfo("Returning from Mod Options");
-                HideModOptionsMenu(uiManager);
+            SafeStripDangerousOnly(row);
+
+            var texts = row.GetComponentsInChildren<Text>(true).ToList();
+            var labelText = texts.OrderByDescending(t => t.fontSize).FirstOrDefault();
+            if (labelText != null) labelText.text = label;
+
+            Button button = null;
+
+            var menuSel = row.GetComponentsInChildren<MenuSelectable>(true).FirstOrDefault();
+            if (menuSel != null)
+            {
+                var go = menuSel.gameObject;
+                SafeStripDangerousOnly(go);
+                button = go.GetComponent<Button>() ?? go.AddComponent<Button>();
+            }
+
+            if (button == null) button = row.GetComponentInChildren<Button>(true);
+
+            if (button == null)
+            {
+                var right = new GameObject("RightButton", typeof(RectTransform), typeof(Image), typeof(Button));
+                var rrt = (RectTransform)right.transform;
+                rrt.SetParent(row.transform, false);
+                rrt.anchorMin = new Vector2(1, 0.5f);
+                rrt.anchorMax = new Vector2(1, 0.5f);
+                rrt.pivot = new Vector2(1, 0.5f);
+                rrt.sizeDelta = new Vector2(160, 40);
+                rrt.anchoredPosition = new Vector2(-20, 0);
+                button = right.GetComponent<Button>();
+
+                var btnTextGO = new GameObject("Text", typeof(RectTransform), typeof(Text));
+                var trt = (RectTransform)btnTextGO.transform;
+                trt.SetParent(right.transform, false);
+                trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 0.5f);
+                trt.pivot = new Vector2(0.5f, 0.5f);
+
+                var anyText = row.GetComponentInChildren<Text>(true);
+                var btxt = btnTextGO.GetComponent<Text>();
+                if (anyText && anyText.font) btxt.font = anyText.font;
+                btxt.fontSize = anyText ? Mathf.Max(20, anyText.fontSize - 2) : 22;
+                btxt.color = Color.white;
+                btxt.text = initial ? "On" : "Off";
+            }
+
+            bool state = initial;
+            var rightText = button.GetComponentInChildren<Text>(true);
+            void Refresh() { if (rightText) rightText.text = state ? "On" : "Off"; }
+            Refresh();
+
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() =>
+            {
+                state = !state;
+                Refresh();
+                try { onChanged?.Invoke(state); }
+                catch (Exception e) { Logger.LogError($"Toggle handler error for {label}: {e}"); }
             });
 
-            // 设置默认高亮为返回按钮
-            modOptionsMenuScreen.defaultHighlight = modOptionsMenuScreen.backButton;
+            var nav = new Navigation { mode = Navigation.Mode.Automatic };
+            button.navigation = nav;
         }
 
-        // 清理内容区域，但保留一个选项作为占位符
-        SetupPlaceholderContent(modMenuObj);
-
-        // 初始隐藏
-        modMenuObj.SetActive(false);
-        Logger.LogInfo("Mod Options menu created using gameOptions template");
-    }
-
-    private static void UpdateMenuTitle(GameObject menuObj)
-    {
-        // 查找标题文本
-        Text[] allTexts = menuObj.GetComponentsInChildren<Text>(true);
-        foreach (Text text in allTexts)
+        private static void UpdateMenuTitleToMod(GameObject menuObj, UIManager uiManager = null)
         {
-            // 查找游戏选项相关的标题
-            if (text.text.ToLower().Contains("game") ||
-                text.text.ToLower().Contains("options") ||
-                IsTitleText(text))
+            var allTexts = menuObj.GetComponentsInChildren<Text>(true);
+            foreach (var text in allTexts)
             {
-                text.text = "MOD OPTIONS";
-                // 移除本地化
-                AutoLocalizeTextUI localize = text.GetComponent<AutoLocalizeTextUI>();
-                if (localize != null) Object.Destroy(localize);
-                Logger.LogInfo($"Updated menu title to: {text.text}");
-                break;
-            }
-        }
-    }
+                var s = text.text ?? "";
+                if (s.ToLower().Contains("game") || s.ToLower().Contains("options") || IsTitleText(text))
+                {
+                    // 先移除本地化组件，防止它覆盖我们的文本
+                    var loc = text.GetComponent<AutoLocalizeTextUI>();
+                    if (loc)
+                    {
+                        loc.enabled = false; // 先禁用
+                        Destroy(loc); // 然后销毁
+                    }
 
-    private static void SetupPlaceholderContent(GameObject menuObj)
-    {
-        // 找到内容区域
-        Transform contentParent = FindContentParent(menuObj);
-        if (contentParent == null)
-        {
-            Logger.LogError("Cannot find content parent for placeholder");
-            return;
-        }
+                    // 强制设置文本
+                    text.text = "MOD OPTIONS";
 
-        // 找到第一个选项按钮作为模板
-        MenuButton[] optionButtons = contentParent.GetComponentsInChildren<MenuButton>(true);
-        if (optionButtons.Length == 0)
-        {
-            Logger.LogWarning("No option buttons found in template");
-            return;
-        }
+                    // 通过 UIManager 实例调用协程
+                    if (uiManager != null)
+                    {
+                        uiManager.StartCoroutine(EnsureTitleText(text));
+                    }
 
-        // 保留第一个按钮作为占位符，修改其他按钮
-        MenuButton placeholderButton = optionButtons[0];
-
-        // 重置第一个按钮
-        ResetButtonComponents(placeholderButton.gameObject, placeholderButton.gameObject);
-
-        // 修改文本为占位符
-        Text textComponent = placeholderButton.GetComponentInChildren<Text>();
-        if (textComponent != null)
-        {
-            textComponent.text = "Mod list will be displayed here";
-            Logger.LogInfo("Set placeholder button text");
-        }
-
-        // 禁用交互但保持可见
-        placeholderButton.interactable = false;
-
-        // 删除其他选项按钮
-        for (int i = 1; i < optionButtons.Length; i++)
-        {
-            if (optionButtons[i] != null && optionButtons[i].gameObject != placeholderButton.gameObject)
-            {
-                Object.Destroy(optionButtons[i].gameObject);
+                    Logger.LogInfo($"Updated menu title to: {text.text}");
+                    break;
+                }
             }
         }
 
-        Logger.LogInfo("Setup placeholder content using existing template button");
-    }
-
-    private static Transform FindContentParent(GameObject menuObj)
-    {
-        // 查找可能的容器 - 游戏选项菜单通常使用VerticalLayoutGroup
-        var layoutGroups = menuObj.GetComponentsInChildren<VerticalLayoutGroup>(true);
-        foreach (var layout in layoutGroups)
+        private static IEnumerator EnsureTitleText(Text titleText)
         {
-            if (layout.transform.childCount > 1) // 可能是内容容器
+            yield return new WaitForEndOfFrame();
+            if (titleText != null)
             {
-                return layout.transform;
+                titleText.text = "MOD OPTIONS";
             }
         }
 
-        // 备用：查找包含多个按钮的父级
-        var buttons = menuObj.GetComponentsInChildren<MenuButton>(true);
-        if (buttons.Length > 0)
+        private static void SetupSafePlaceholderContent(GameObject menuObj)
         {
-            Transform commonParent = buttons[0].transform.parent;
-            // 检查是否所有按钮都在同一个父级下
-            if (buttons.All(btn => btn.transform.parent == commonParent))
+            var contentParent = FindContentParent(menuObj);
+            if (contentParent == null)
             {
-                return commonParent;
+                Logger.LogError("Cannot find content parent for placeholder");
+                return;
             }
-        }
 
-        return menuObj.transform;
-    }
-
-    private static bool IsTitleText(Text textComponent)
-    {
-        RectTransform rect = textComponent.GetComponent<RectTransform>();
-        if (rect != null)
-        {
-            Vector3[] corners = new Vector3[4];
-            rect.GetWorldCorners(corners);
-            float maxY = corners.Max(corner => corner.y);
-
-            if (maxY > Screen.height * 0.7f) // 标题通常在顶部
+            // 删除原内容
+            for (int i = contentParent.childCount - 1; i >= 0; i--)
             {
-                return true;
+                var child = contentParent.GetChild(i);
+                if (child == null) continue;
+                Destroy(child.gameObject);
             }
-        }
-        return false;
-    }
 
-    private static IEnumerator ShowModMenuCoroutine(UIManager uiManager)
-    {
-        if (modOptionsMenuScreen == null) yield break;
+            // 放一个安全占位行
+            var row = new GameObject("PlaceholderRow", typeof(RectTransform), typeof(Image));
+            var rowRt = (RectTransform)row.transform;
+            rowRt.SetParent(contentParent, false);
+            rowRt.sizeDelta = new Vector2(0, 48);
+            var img = row.GetComponent<Image>();
+            img.color = new Color(1, 1, 1, 0.05f);
 
-        isShowingModMenu = true;
+            var label = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            var lrt = (RectTransform)label.transform;
+            lrt.SetParent(rowRt, false);
+            lrt.anchorMin = new Vector2(0, 0.5f);
+            lrt.anchorMax = new Vector2(0, 0.5f);
+            lrt.pivot = new Vector2(0, 0.5f);
+            lrt.anchoredPosition = new Vector2(14, 0);
+            var txt = label.GetComponent<Text>();
+            txt.text = "Mod list will be displayed here";
+            txt.fontSize = 26;
+            txt.color = Color.white;
 
-        // 停止UI输入
-        var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
-        if (inputHandler != null)
-        {
-            inputHandler.StopUIInput();
-        }
+            var any = menuObj.GetComponentInChildren<Text>(true);
+            if (any && any.font) txt.font = any.font;
 
-        // 隐藏Extras菜单 - 使用UIManager的方法
-        if (uiManager.extrasMenuScreen != null && uiManager.extrasMenuScreen.gameObject.activeSelf)
-        {
-            yield return uiManager.HideMenu(uiManager.extrasMenuScreen, disable: true);
-        }
-
-        // 显示Mod菜单
-        modOptionsMenuScreen.gameObject.SetActive(true);
-
-        // 确保CanvasGroup正确设置
-        CanvasGroup modCanvasGroup = modOptionsMenuScreen.GetComponent<CanvasGroup>();
-        if (modCanvasGroup != null)
-        {
-            modCanvasGroup.alpha = 0f;
-            modCanvasGroup.interactable = false;
-            modCanvasGroup.blocksRaycasts = false;
-
-            // 淡入效果
-            yield return uiManager.FadeInCanvasGroup(modCanvasGroup);
-
-            // 确保在淡入后启用交互
-            modCanvasGroup.interactable = true;
-            modCanvasGroup.blocksRaycasts = true;
+            // 无任何行为脚本、无 EventTrigger、无 Button
         }
 
-        // 设置默认高亮 - 确保使用正确的backButton
-        if (modOptionsMenuScreen.backButton != null)
+        private static Transform FindContentParent(GameObject menuObj)
         {
-            // 等待一帧确保UI已更新
+            var layouts = menuObj.GetComponentsInChildren<VerticalLayoutGroup>(true);
+            foreach (var layout in layouts)
+            {
+                // 选择更“内容化”的容器（通常子节点较多）
+                if (layout.transform.childCount >= 1)
+                    return layout.transform;
+            }
+
+            // 兜底：找到所有 MenuButton 的公共父
+            var buttons = menuObj.GetComponentsInChildren<MenuButton>(true);
+            if (buttons.Length > 0)
+            {
+                var p = buttons[0].transform.parent;
+                if (buttons.All(b => b.transform.parent == p))
+                    return p;
+            }
+
+            return menuObj.transform;
+        }
+
+        private static bool IsTitleText(Text textComponent)
+        {
+            var rect = textComponent.GetComponent<RectTransform>();
+            if (rect != null)
+            {
+                Vector3[] corners = new Vector3[4];
+                rect.GetWorldCorners(corners);
+                float maxY = corners.Max(corner => corner.y);
+                if (maxY > Screen.height * 0.7f) return true;
+            }
+            return false;
+        }
+
+        private static IEnumerator ShowModMenuCoroutine(UIManager uiManager)
+        {
+            if (modOptionsMenuScreen == null) yield break;
+
+            isShowingModMenu = true;
+
+            var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
+            if (inputHandler != null) inputHandler.StopUIInput();
+
+            // 用原生隐藏 Extras，触发原生出场动画（不要传 disable）
+            if (uiManager.extrasMenuScreen != null && uiManager.extrasMenuScreen.gameObject.activeSelf)
+            {
+                yield return uiManager.HideMenu(uiManager.extrasMenuScreen);
+            }
+
+            // 构建列表（不要破坏原生组件）
+            BuildModsList();
+
+            // 用原生 ShowMenu 展示，触发丝线进场动画
+            yield return uiManager.ShowMenu(modOptionsMenuScreen);
+
+            var canvasGroup = modOptionsMenuScreen.ScreenCanvasGroup;
+            if (canvasGroup != null)
+            {
+                canvasGroup.interactable = true;
+                canvasGroup.blocksRaycasts = true;
+                canvasGroup.alpha = 1f;
+            }
+
+            // 默认高亮（保留原生默认选择，如果你想高亮 Back/第一行，请给 defaultHighlight 赋值）
+            if (modOptionsMenuScreen.defaultHighlight != null)
+                modOptionsMenuScreen.defaultHighlight.Select();
+            else
+                modOptionsMenuScreen.HighlightDefault();
+
+            if (inputHandler != null) inputHandler.StartUIInput();
+
+            Logger.LogInfo("Mod Options menu shown via ShowMenu()");
+        }
+
+        private static IEnumerator ReturnToExtrasMenuCoroutine(UIManager uiManager)
+        {
+            Logger.LogInfo("Starting return to Extras menu coroutine...");
+
+            // 停止输入
+            var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
+            if (inputHandler != null)
+            {
+                inputHandler.StopUIInput();
+            }
+
+            // 隐藏Mod菜单
+            if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject.activeSelf)
+            {
+                Logger.LogInfo("Hiding mod options menu...");
+                yield return uiManager.HideMenu(modOptionsMenuScreen);
+            }
+
+            // 重置状态
+            isShowingModMenu = false;
+
+            // 显示Extras菜单
+            if (uiManager.extrasMenuScreen != null)
+            {
+                Logger.LogInfo("Showing extras menu...");
+                yield return uiManager.ShowMenu(uiManager.extrasMenuScreen);
+
+                // 确保可交互
+                var canvasGroup = uiManager.extrasMenuScreen.ScreenCanvasGroup;
+                if (canvasGroup != null)
+                {
+                    canvasGroup.interactable = true;
+                    canvasGroup.blocksRaycasts = true;
+                    canvasGroup.alpha = 1f;
+                }
+
+                // 设置默认高亮
+                if (uiManager.extrasMenuScreen.defaultHighlight != null)
+                {
+                    uiManager.extrasMenuScreen.defaultHighlight.Select();
+                }
+                else
+                {
+                    uiManager.extrasMenuScreen.HighlightDefault();
+                }
+            }
+            else
+            {
+                Logger.LogWarning("ExtrasMenuScreen is null, using GoToExtrasMenu...");
+                uiManager.GoToExtrasMenu();
+            }
+
+            // 重启输入
+            if (inputHandler != null)
+            {
+                inputHandler.StartUIInput();
+            }
+
+            Logger.LogInfo("Return to Extras menu completed");
+        }
+
+        // 在这里添加第二个新方法（备用方案）
+        private static IEnumerator SimpleReturnToExtras(UIManager uiManager)
+        {
+            Logger.LogInfo("Simple return to extras...");
+
+            // 隐藏Mod菜单
+            if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject != null)
+            {
+                modOptionsMenuScreen.gameObject.SetActive(false);
+            }
+
+            isShowingModMenu = false;
+
+            // 等一帧
             yield return null;
-            modOptionsMenuScreen.backButton.Select();
-        }
-        else
-        {
-            modOptionsMenuScreen.HighlightDefault();
-        }
 
-        // 恢复UI输入
-        if (inputHandler != null)
-        {
-            inputHandler.StartUIInput();
-        }
-
-        Logger.LogInfo("Mod Options menu shown successfully");
-    }
-
-    private static void HideModOptionsMenu(UIManager uiManager)
-    {
-        if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject.activeSelf)
-        {
-            uiManager.StartCoroutine(HideModMenuCoroutine(uiManager));
-        }
-    }
-
-    private static IEnumerator HideModMenuCoroutine(UIManager uiManager)
-    {
-        var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
-        if (inputHandler != null)
-        {
-            inputHandler.StopUIInput();
-        }
-
-        if (modOptionsMenuScreen != null)
-        {
-            CanvasGroup modCanvasGroup = modOptionsMenuScreen.GetComponent<CanvasGroup>();
-            if (modCanvasGroup != null)
+            // 强制显示Extras菜单
+            if (uiManager.extrasMenuScreen != null)
             {
-                // 禁用交互
-                modCanvasGroup.interactable = false;
-                modCanvasGroup.blocksRaycasts = false;
+                uiManager.extrasMenuScreen.gameObject.SetActive(true);
 
-                // 淡出效果
-                yield return uiManager.FadeOutCanvasGroup(modCanvasGroup);
+                // 确保可交互
+                var canvasGroup = uiManager.extrasMenuScreen.ScreenCanvasGroup;
+                if (canvasGroup != null)
+                {
+                    canvasGroup.interactable = true;
+                    canvasGroup.blocksRaycasts = true;
+                    canvasGroup.alpha = 1f;
+                }
+
+                // 设置为当前菜单
+                var currentMenuField = Traverse.Create(uiManager).Field("currentMenuScreen");
+                if (currentMenuField != null)
+                {
+                    currentMenuField.SetValue(uiManager.extrasMenuScreen);
+                }
+
+                // 设置默认高亮
+                if (uiManager.extrasMenuScreen.defaultHighlight != null)
+                {
+                    uiManager.extrasMenuScreen.defaultHighlight.Select();
+                }
             }
-            modOptionsMenuScreen.gameObject.SetActive(false);
+
+            Logger.LogInfo("Simple return completed");
         }
 
-        // 显示Extras菜单
-        yield return uiManager.GoToExtrasMenu();
-
-        if (inputHandler != null)
+        public static void HideModOptionsMenu(UIManager uiManager)
         {
-            inputHandler.StartUIInput();
+            try
+            {
+                Logger.LogInfo("Hiding Mod Options menu...");
+
+                if (modOptionsMenuScreen != null)
+                {
+                    modOptionsMenuScreen.gameObject.SetActive(false);
+                }
+
+                if (uiManager?.extrasMenuScreen != null)
+                {
+                    uiManager.ShowMenu(uiManager.extrasMenuScreen);
+                }
+
+                Logger.LogInfo("Returned to Extras menu");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"HideModOptionsMenu error: {e}");
+            }
         }
 
-        isShowingModMenu = false;
+        // 添加清理函数，在适当时候调用
+        public static void CleanupModMenu()
+        {
+            try
+            {
+                Logger.LogInfo("Cleaning up mod menu references...");
+
+                if (modOptionsButton != null && modOptionsButton.gameObject != null)
+                {
+                    Destroy(modOptionsButton.gameObject);
+                }
+                modOptionsButton = null;
+
+                if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject != null)
+                {
+                    Destroy(modOptionsMenuScreen.gameObject);
+                }
+                modOptionsMenuScreen = null;
+
+                Logger.LogInfo("Mod menu cleanup completed");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"CleanupModMenu error: {e}");
+            }
+        }
+
+
+        private static IEnumerator HideModMenuCoroutine(UIManager uiManager)
+        {
+            var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
+            if (inputHandler != null) inputHandler.StopUIInput();
+
+            if (modOptionsMenuScreen != null && modOptionsMenuScreen.gameObject.activeSelf)
+            {
+                // 原生隐藏，触发退场动画
+                yield return uiManager.HideMenu(modOptionsMenuScreen);
+                modOptionsMenuScreen.gameObject.SetActive(false);
+            }
+
+            if (uiManager.extrasMenuScreen != null)
+            {
+                // 原生展示 Extras
+                yield return uiManager.ShowMenu(uiManager.extrasMenuScreen);
+            }
+            else
+            {
+                yield return uiManager.GoToExtrasMenu();
+            }
+
+            if (inputHandler != null) inputHandler.StartUIInput();
+            isShowingModMenu = false;
+        }
+
+        private static void ManualPositionButton(GameObject button, GameObject referenceButton)
+        {
+            try
+            {
+                var buttonRect = button.GetComponent<RectTransform>();
+                var referenceRect = referenceButton.GetComponent<RectTransform>();
+                if (!buttonRect || !referenceRect) return;
+
+                buttonRect.anchoredPosition = new Vector2(
+                    referenceRect.anchoredPosition.x,
+                    referenceRect.anchoredPosition.y - 100f
+                );
+                Logger.LogInfo($"Manually positioned button at: {buttonRect.anchoredPosition} (offset: -100f)");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"Error in manual positioning: {e}");
+            }
+        }
+
+        private static void FixButtonPosition(GameObject button)
+        {
+            try
+            {
+                var buttonRect = button.GetComponent<RectTransform>();
+                if (!buttonRect) return;
+
+                var siblings = button.transform.parent.GetComponentsInChildren<MenuButton>(true)
+                    .Where(b => b.gameObject != button && b.gameObject.activeInHierarchy).ToArray();
+
+                if (siblings.Length > 0)
+                {
+                    var siblingRect = siblings[0].GetComponent<RectTransform>();
+                    if (siblingRect != null)
+                    {
+                        buttonRect.anchoredPosition = new Vector2(
+                            siblingRect.anchoredPosition.x,
+                            siblingRect.anchoredPosition.y - 100f
+                        );
+                        Logger.LogInfo($"Fixed button position: {buttonRect.anchoredPosition} (offset: -100f)");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"Error fixing button position: {e}");
+            }
+        }
     }
 }

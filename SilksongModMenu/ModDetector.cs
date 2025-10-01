@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using BepInEx;
+using ModUINamespace;
+using ModMenu = ModUINamespace.SilksongModMenu;
 
 namespace SilksongModManagerMod
 {
@@ -17,8 +19,8 @@ namespace SilksongModManagerMod
         {
             detectedMods = new List<ModInfo>();
             pluginsPath = Path.Combine(Paths.GameRootPath, "BepInEx", "plugins");
-            SilksongModMenu.Logger.LogInfo("插件目录路径: " + pluginsPath);
-            SilksongModMenu.Logger.LogInfo("ModDetector 已初始化，扫描将在打开UI时触发");
+            ModMenu.Logger.LogInfo("插件目录路径: " + pluginsPath);
+            ModMenu.Logger.LogInfo("ModDetector 已初始化，扫描将在打开UI时触发");
         }
 
         public void RefreshModList()
@@ -28,11 +30,11 @@ namespace SilksongModManagerMod
                 detectedMods.Clear();
                 if (!Directory.Exists(pluginsPath))
                 {
-                    SilksongModMenu.Logger.LogWarning("插件目录不存在: " + pluginsPath);
+                    ModMenu.Logger.LogWarning("插件目录不存在: " + pluginsPath);
                     return;
                 }
 
-                SilksongModMenu.Logger.LogInfo("刷新Mod列表");
+                ModMenu.Logger.LogInfo("刷新Mod列表");
 
                 // 扫描BepInEx插件目录
                 var pluginFiles = Directory.GetFiles(pluginsPath, "*.dll", SearchOption.AllDirectories)
@@ -57,19 +59,19 @@ namespace SilksongModManagerMod
                         };
 
                         detectedMods.Add(modInfo);
-                        SilksongModMenu.Logger.LogInfo($"Found mod: {modInfo.FileName} (Enabled: {modInfo.IsEnabled})");
+                        ModMenu.Logger.LogInfo($"Found mod: {modInfo.FileName} (Enabled: {modInfo.IsEnabled})");
                     }
                     catch (Exception ex)
                     {
-                        SilksongModMenu.Logger.LogError($"Error processing mod file {filePath}: {ex.Message}");
+                        ModMenu.Logger.LogError($"Error processing mod file {filePath}: {ex.Message}");
                     }
                 }
 
-                SilksongModMenu.Logger.LogInfo($"Total mods found: {detectedMods.Count}");
+                ModMenu.Logger.LogInfo($"Total mods found: {detectedMods.Count}");
             }
             catch (Exception ex)
             {
-                SilksongModMenu.Logger.LogError("刷新模组列表失败: " + ex.Message);
+               ModMenu.Logger.LogError("刷新模组列表失败: " + ex.Message);
             }
         }
     }
