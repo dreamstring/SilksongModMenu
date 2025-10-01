@@ -96,10 +96,19 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="GameRestartUtil.cs" />
     <Compile Include="ModDetector.cs" />
+    <Compile Include="ModMetadata.cs" />
     <Compile Include="ModUiLogger.cs" />
-    <Compile Include="SIlksongModMenuMain.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="SilksongModMenu.Buttons.cs" />
+    <Compile Include="SilksongModMenu.Config.cs" />
+    <Compile Include="SilksongModMenu.cs" />
+    <Compile Include="SilksongModMenu.Diagnostics.cs" />
+    <Compile Include="SilksongModMenu.MenuScreens.cs" />
+    <Compile Include="SilksongModMenu.ModList.cs" />
+    <Compile Include="SilksongModMenu.Patches.cs" />
+    <Compile Include="SilksongModMenu.StateAndCleanup.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
