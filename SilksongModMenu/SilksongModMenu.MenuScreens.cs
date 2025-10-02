@@ -46,6 +46,7 @@ namespace ModUINamespace
             if (modOptionsMenuScreen == null)
             {
                 Logger.LogError("Failed to get MenuScreen component from cloned object");
+
                 return;
             }
 

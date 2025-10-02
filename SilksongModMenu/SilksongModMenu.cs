@@ -2,8 +2,10 @@
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -31,7 +33,6 @@ namespace ModUINamespace
 
             var harmony = new Harmony("com.yourname.silksongmodmenu");
             harmony.PatchAll(typeof(SilksongModMenu));
-            harmony.PatchAll(typeof(UIManager_GoToPreviousMenu_Patch));
 
             EnsureConfigLoaded();
 
@@ -45,6 +46,31 @@ namespace ModUINamespace
             Application.quitting -= OnApplicationQuitting;
             Instance = null;
         }
+
+        private void Update()
+        {
+            // 只在显示 Mod 菜单时监听
+            if (!isShowingModMenu || modOptionsMenuScreen == null || !modOptionsMenuScreen.gameObject.activeSelf)
+                return;
+
+            // 直接监听键盘/手柄输入
+            bool cancelPressed = Input.GetKeyDown(KeyCode.Escape) ||
+                                 Input.GetKeyDown(KeyCode.X) ||
+                                 Input.GetKeyDown(KeyCode.Backspace) ||
+                                 Input.GetButtonDown("Cancel"); // Unity 默认的取消按钮
+
+            if (cancelPressed)
+            {
+                Logger.LogInfo("[Update] Cancel key pressed in Mod menu!");
+
+                var uiManager = FindObjectOfType<UIManager>();
+                if (uiManager != null)
+                {
+                    StartCoroutine(ReturnToExtrasMenuCoroutine(uiManager));
+                }
+            }
+        }
+
 
         /// <summary>
         /// 游戏退出时调用（包括正常退出和 Alt+F4）
@@ -138,47 +164,67 @@ namespace ModUINamespace
 
     }
 
-    [HarmonyPatch(typeof(UIManager), "GoToPreviousMenu")]
-    public static class UIManager_GoToPreviousMenu_Patch
+    [HarmonyPatch]
+    public static class DebugAllMenuMethods
     {
-        static bool Prefix(UIManager __instance)
+        static IEnumerable<MethodBase> TargetMethods()
         {
-            // 添加详细日志
-            SilksongModMenu.Logger.LogInfo($"[GoToPreviousMenu] Called. isShowingModMenu={SilksongModMenu.isShowingModMenu}, modOptionsMenuScreen exists={SilksongModMenu.modOptionsMenuScreen != null}");
+            // 尝试 Patch 所有可能的方法
+            var methods = new List<MethodBase>();
 
-            if (SilksongModMenu.isShowingModMenu && SilksongModMenu.modOptionsMenuScreen != null)
+            // MenuScreen 的方法
+            var menuScreenType = typeof(MenuScreen);
+            var goBack = AccessTools.Method(menuScreenType, "GoBack");
+            if (goBack != null) methods.Add(goBack);
+
+            var hide = AccessTools.Method(menuScreenType, "Hide");
+            if (hide != null) methods.Add(hide);
+
+            // UIManager 的方法
+            var uiManagerType = typeof(UIManager);
+            foreach (var method in uiManagerType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
-                SilksongModMenu.Logger.LogInfo("[X Button] Intercepted - closing Mod menu");
-
-                try
+                if (method.Name.Contains("Back") || method.Name.Contains("Cancel") || method.Name.Contains("Close"))
                 {
-                    // 优先从 Plugin 实例启动 Coroutine
-                    if (SilksongModMenu.Instance != null)
-                    {
-                        SilksongModMenu.Instance.StartCoroutine(
-                            SilksongModMenu.ReturnToExtrasMenuCoroutine(__instance)
-                        );
-                        SilksongModMenu.Logger.LogInfo("[X Button] Coroutine started from Plugin instance");
-                    }
-                    else
-                    {
-                        // 备用方案：从 UIManager 实例启动
-                        __instance.StartCoroutine(SilksongModMenu.ReturnToExtrasMenuCoroutine(__instance));
-                        SilksongModMenu.Logger.LogInfo("[X Button] Coroutine started from UIManager instance");
-                    }
+                    methods.Add(method);
                 }
-                catch (System.Exception ex)
-                {
-                    SilksongModMenu.Logger.LogError($"[X Button] Failed to start coroutine: {ex}");
-                    // 如果启动 Coroutine 失败，允许原方法执行（避免卡死）
-                    return true;
-                }
-
-                return false; // 阻止原方法执行
             }
 
-            SilksongModMenu.Logger.LogInfo("[GoToPreviousMenu] Allowing original method to execute");
-            return true; // 允许原方法执行
+            return methods;
+        }
+
+        static void Prefix(object __instance, MethodBase __originalMethod)
+        {
+            if (SilksongModMenu.isShowingModMenu)
+            {
+                SilksongModMenu.Logger.LogInfo($"[DEBUG] ⚠️ {__originalMethod.DeclaringType.Name}.{__originalMethod.Name} called while in Mod menu!");
+                SilksongModMenu.Logger.LogInfo($"[DEBUG] Instance: {__instance}");
+                SilksongModMenu.Logger.LogInfo($"[DEBUG] Stack trace: {Environment.StackTrace}");
+            }
+        }
+    }
+
+    // MenuScreen.GoBack Patch（保留这个）
+    [HarmonyPatch(typeof(MenuScreen), "GoBack")]
+    public static class MenuScreen_GoBack_Patch
+    {
+        static bool Prefix(MenuScreen __instance, ref bool __result)
+        {
+            if (__instance == SilksongModMenu.modOptionsMenuScreen)
+            {
+                SilksongModMenu.Logger.LogInfo("[GoBack Patch] Intercepted! Returning to Extras menu...");
+
+                var uiManager = GameObject.FindObjectOfType<UIManager>();
+                if (uiManager != null)
+                {
+                    uiManager.StartCoroutine(SilksongModMenu.ReturnToExtrasMenuCoroutine(uiManager));
+                }
+
+                __result = true;
+                return false;
+            }
+
+            return true;
         }
     }
 }
