@@ -11,11 +11,19 @@ using UnityEngine.UI;
 
 namespace ModUINamespace
 {
-    [BepInPlugin("com.yourname.silksongmodmenu", "Silksong Mod Menu", "1.0.0")]
+    [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
     public partial class SilksongModMenu : BaseUnityPlugin
     {
-        public static SilksongModMenu Instance { get; private set; }
+        public static class PluginInfo
+        {
+            public const string GUID = "com.silksong.modmenu";
+            public const string Name = "Silksong Mod Menu";
+            public const string Version = "1.0.0";
+            public const string Author = "dringqian";
+            public const string Website = "https://github.com/dreamstring/SilksongModMenu";
+        }
 
+        public static SilksongModMenu Instance { get; private set; }
         public static MenuScreen modOptionsMenuScreen;
         public static bool isShowingModMenu = false;
         internal new static ManualLogSource Logger;
