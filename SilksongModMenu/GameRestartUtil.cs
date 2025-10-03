@@ -13,6 +13,10 @@ public static class GameRestartUtil
     private const string UpdaterFileName = "RestartStub.exe";
     private const string PostProcessorFileName = "ModPostProcessor.exe";
 
+    private const string JsonConfigRelativePath = "BepInEx/config/mod_processor_config.json";
+    private const string LogRelativePath = "BepInEx/logs/mod_processor.log";
+    private const string RestartStubLogRelativePath = "BepInEx/logs/restart_stub.log";
+
     private static bool _modChangesProcessed = false;
 
     public static void RestartGameImmediate()
@@ -57,7 +61,8 @@ public static class GameRestartUtil
 
             string steamUrl = "steam://rungameid/" + steamAppId;
             int currentPid = Process.GetCurrentProcess().Id;
-            string logPath = Path.Combine(exeDir, "restart_stub.log");
+            string logPath = Path.Combine(exeDir, RestartStubLogRelativePath);
+            EnsureDirectoryExists(logPath);  // 添加这
 
             var argBuilder = new StringBuilder();
             argBuilder.Append("--target \"").Append(steamUrl).Append("\" ");
@@ -171,8 +176,11 @@ public static class GameRestartUtil
                 UnityEngine.Debug.Log($"  {kvp.Key} → {(kvp.Value ? "Enabled" : "Disabled")}");
             }
 
-            string jsonConfigPath = Path.Combine(gameDir, "BepInEx", "mod_processor_config.json");
-            GenerateJsonConfig(jsonConfigPath, pluginsDir, modStates, gameDir);
+            string jsonConfigPath = Path.Combine(gameDir, JsonConfigRelativePath);
+            string logPath = Path.Combine(gameDir, LogRelativePath);
+            EnsureDirectoryExists(jsonConfigPath);
+            EnsureDirectoryExists(logPath);
+            GenerateJsonConfig(jsonConfigPath, pluginsDir, modStates, logPath);
 
             var psi = new ProcessStartInfo();
             psi.FileName = postProcessorPath;
@@ -252,56 +260,40 @@ public static class GameRestartUtil
         string jsonPath,
         string pluginsDir,
         Dictionary<string, bool> modStates,
-        string gameDir)
+        string logPath)
     {
         var toEnable = new List<string>();
         var toDisable = new List<string>();
 
+        UnityEngine.Debug.Log("=== Generating JSON Config ===");
+        UnityEngine.Debug.Log($"Total mods in metadata: {modStates.Count}");
+
         foreach (var kvp in modStates)
         {
-            string dllFileName = kvp.Key;  // 直接就是 DLL 文件名
+            string dllFileName = kvp.Key;
             bool targetEnabled = kvp.Value;
 
-            // ========== 添加这段保护检查 ==========
+            // 保护系统 DLL
             if (ModUINamespace.SilksongModMenu.IgnoredDlls.Contains(dllFileName))
             {
-                UnityEngine.Debug.Log($"[Protected] Skipping config generation for {dllFileName}");
+                UnityEngine.Debug.Log($"[Protected] {dllFileName}");
                 continue;
             }
-            // ====================================
 
-            string dllPath = Path.Combine(pluginsDir, dllFileName);
-            string disabledPath = dllPath + ".disabled";
-
-            bool currentEnabled = File.Exists(dllPath);
-            bool currentDisabled = File.Exists(disabledPath);
-
-            var meta = ModUINamespace.ModMetadataManager.GetModByDll(dllFileName);
-            string displayName = meta?.Name ?? dllFileName;
-
-            if (targetEnabled && currentDisabled && !currentEnabled)
+            // 按目标状态分类（不检查当前状态，让 ModPostProcessor 处理）
+            if (targetEnabled)
             {
                 toEnable.Add(dllFileName);
-                UnityEngine.Debug.Log($"[Mod Change] {displayName} ({dllFileName}) → ENABLE");
-            }
-            else if (!targetEnabled && currentEnabled && !currentDisabled)
-            {
-                toDisable.Add(dllFileName);
-                UnityEngine.Debug.Log($"[Mod Change] {displayName} ({dllFileName}) → DISABLE");
             }
             else
             {
-                UnityEngine.Debug.Log($"[Mod Change] {displayName} ({dllFileName}) → NO CHANGE");
+                toDisable.Add(dllFileName);
             }
-        }
 
-        if (toEnable.Count == 0 && toDisable.Count == 0)
-        {
-            UnityEngine.Debug.Log("No mod changes needed.");
-            return;
+            var meta = ModUINamespace.ModMetadataManager.GetModByDll(dllFileName);
+            string displayName = meta?.Name ?? dllFileName;
+            UnityEngine.Debug.Log($"  {displayName} → {(targetEnabled ? "ENABLE" : "DISABLE")}");
         }
-
-        string logPath = Path.Combine(gameDir, "BepInEx", "mod_processor.log");
 
         var json = new StringBuilder();
         json.AppendLine("{");
@@ -314,10 +306,11 @@ public static class GameRestartUtil
 
         File.WriteAllText(jsonPath, json.ToString());
 
-        UnityEngine.Debug.Log("Generated JSON config:");
-        UnityEngine.Debug.Log(json.ToString());
+        UnityEngine.Debug.Log("=== JSON Config Summary ===");
+        UnityEngine.Debug.Log($"Enable: {toEnable.Count} mods");
+        UnityEngine.Debug.Log($"Disable: {toDisable.Count} mods");
+        UnityEngine.Debug.Log($"Config saved to: {jsonPath}");
     }
-
 
     private static string EscapeJson(string s)
     {
@@ -365,6 +358,22 @@ public static class GameRestartUtil
         catch
         {
             return "2145240";
+        }
+    }
+
+    private static void EnsureDirectoryExists(string filePath)
+    {
+        try
+        {
+            string directory = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"Failed to create directory for {filePath}: {ex.Message}");
         }
     }
 }
