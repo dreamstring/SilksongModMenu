@@ -227,6 +227,14 @@ public static class GameRestartUtil
         {
             foreach (var meta in ModUINamespace.ModMetadataManager.GetAllMods())
             {
+                // ========== 使用 SilksongModMenu 的保护列表 ==========
+                if (ModUINamespace.SilksongModMenu.IgnoredDlls.Contains(meta.DllFileName))
+                {
+                    UnityEngine.Debug.Log($"[Protected] Skipping {meta.DllFileName}");
+                    continue;
+                }
+                // ===================================================
+
                 // 使用 DLL 文件名作为 Key
                 modStates[meta.DllFileName] = meta.Enabled;
             }
@@ -253,6 +261,14 @@ public static class GameRestartUtil
         {
             string dllFileName = kvp.Key;  // 直接就是 DLL 文件名
             bool targetEnabled = kvp.Value;
+
+            // ========== 添加这段保护检查 ==========
+            if (ModUINamespace.SilksongModMenu.IgnoredDlls.Contains(dllFileName))
+            {
+                UnityEngine.Debug.Log($"[Protected] Skipping config generation for {dllFileName}");
+                continue;
+            }
+            // ====================================
 
             string dllPath = Path.Combine(pluginsDir, dllFileName);
             string disabledPath = dllPath + ".disabled";
@@ -301,6 +317,7 @@ public static class GameRestartUtil
         UnityEngine.Debug.Log("Generated JSON config:");
         UnityEngine.Debug.Log(json.ToString());
     }
+
 
     private static string EscapeJson(string s)
     {

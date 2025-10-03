@@ -23,6 +23,23 @@ namespace ModUINamespace
             public const string Website = "https://github.com/dreamstring/SilksongModMenu";
         }
 
+        // ========== 添加这个常量 ==========
+        private static readonly HashSet<string> IgnoredGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            PluginInfo.GUID,  // 使用实际的 GUID
+            "com.silksong.modmenu",
+            "com.yourname.silksongmodmenu"  // 保留以防万一
+        };
+
+        public static readonly HashSet<string> IgnoredDlls = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "SilksongModMenu.dll",
+            "ModPostProcessor.exe",
+            "RestartStub.exe",
+            "Newtonsoft.Json.dll",
+            "0Harmony.dll"
+        };
+
         public static SilksongModMenu Instance { get; private set; }
         public static MenuScreen modOptionsMenuScreen;
         public static bool isShowingModMenu = false;

@@ -217,6 +217,72 @@ namespace ModUINamespace
             }
         }
 
+        /// <summary>
+        /// 诊断:查找游戏中所有的 Scrollbar
+        /// </summary>
+        private static void DiagnoseAllScrollbars()
+        {
+            Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
+            Logger.LogInfo("║ DIAGNOSING ALL SCROLLBARS IN SCENE");
+            Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
+
+            var allScrollbars = Resources.FindObjectsOfTypeAll<Scrollbar>();
+            Logger.LogInfo($"Found {allScrollbars.Length} Scrollbar(s) in scene");
+
+            foreach (var scrollbar in allScrollbars)
+            {
+                if (scrollbar == null) continue;
+
+                Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
+                Logger.LogInfo($"║ Scrollbar: {scrollbar.name}");
+                Logger.LogInfo($"║   ├─ Path: {GetFullPath(scrollbar.transform)}"); // ✅ 修改这里
+                Logger.LogInfo($"║   ├─ Active: {scrollbar.gameObject.activeInHierarchy}");
+                Logger.LogInfo($"║   ├─ Direction: {scrollbar.direction}");
+                Logger.LogInfo($"║   ├─ Size: {scrollbar.size}");
+                Logger.LogInfo($"║   ├─ Value: {scrollbar.value}");
+                Logger.LogInfo($"║   └─ Handle: {scrollbar.handleRect?.name ?? "null"}");
+
+                // 分析父对象
+                var scrollRect = scrollbar.GetComponentInParent<ScrollRect>();
+                if (scrollRect != null)
+                {
+                    Logger.LogInfo($"║   └─ Parent ScrollRect: {scrollRect.name}");
+                }
+
+                // 分析子对象
+                var children = scrollbar.GetComponentsInChildren<Transform>(true);
+                Logger.LogInfo($"║   └─ Children: {children.Length}");
+                foreach (var child in children)
+                {
+                    if (child == scrollbar.transform) continue;
+                    Logger.LogInfo($"║       ├─ {child.name}");
+                }
+
+                Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
+            }
+
+            // 也查找所有 ScrollRect
+            var allScrollRects = Resources.FindObjectsOfTypeAll<ScrollRect>();
+            Logger.LogInfo($"\nFound {allScrollRects.Length} ScrollRect(s) in scene");
+
+            foreach (var scrollRect in allScrollRects)
+            {
+                if (scrollRect == null) continue;
+
+                Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
+                Logger.LogInfo($"║ ScrollRect: {scrollRect.name}");
+                Logger.LogInfo($"║   ├─ Path: {GetFullPath(scrollRect.transform)}"); // ✅ 修改这里
+                Logger.LogInfo($"║   ├─ Active: {scrollRect.gameObject.activeInHierarchy}");
+                Logger.LogInfo($"║   ├─ Horizontal: {scrollRect.horizontal}");
+                Logger.LogInfo($"║   ├─ Vertical: {scrollRect.vertical}");
+                Logger.LogInfo($"║   ├─ Content: {scrollRect.content?.name ?? "null"}");
+                Logger.LogInfo($"║   ├─ Viewport: {scrollRect.viewport?.name ?? "null"}");
+                Logger.LogInfo($"║   ├─ Horizontal Scrollbar: {scrollRect.horizontalScrollbar?.name ?? "null"}");
+                Logger.LogInfo($"║   └─ Vertical Scrollbar: {scrollRect.verticalScrollbar?.name ?? "null"}");
+                Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
+            }
+        }
+
         // 辅助方法：获取完整路径
         private static string GetFullPath(Transform transform)
         {

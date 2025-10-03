@@ -92,6 +92,27 @@ namespace ModUINamespace
 
             Logger.LogInfo($"Creating mod row for: {modName}");
 
+            var rowRT = newRow.GetComponent<RectTransform>();
+            if (rowRT != null)
+            {
+                // 方法1：直接设置 sizeDelta
+                rowRT.sizeDelta = new Vector2(rowRT.sizeDelta.x, 100f);
+                Logger.LogInfo($"✓ Row RectTransform height set: {rowRT.sizeDelta.y}");
+            }
+
+            // 方法2：添加 LayoutElement（更可靠）
+            var layoutElement = newRow.GetComponent<LayoutElement>();
+            if (layoutElement == null)
+            {
+                layoutElement = newRow.AddComponent<LayoutElement>();
+                Logger.LogInfo("✓ Added LayoutElement to row");
+            }
+
+            layoutElement.minHeight = 100f;
+            layoutElement.preferredHeight = 100f;
+            layoutElement.flexibleHeight = 0f;
+            Logger.LogInfo($"✓ LayoutElement configured: preferredHeight={layoutElement.preferredHeight}");
+
             bool currentState = initialEnabled;
 
             // 保存原始的 Selectable 配置
@@ -364,19 +385,34 @@ namespace ModUINamespace
             {
                 ModMetadataManager.Load();
 
-                // 1️⃣ 扫描已加载的 Mod
+                // 1. 扫描已加载的 Mod
                 foreach (var kv in Chainloader.PluginInfos)
                 {
                     var pi = kv.Value;
                     if (pi?.Metadata == null) continue;
 
                     string guid = pi.Metadata.GUID;
-                    if (guid == "com.yourname.silksongmodmenu") continue;
+
+                    // 先声明 dllFileName
+                    string dllFileName = Path.GetFileName(pi.Location);
+
+                    // 过滤 GUID
+                    if (guid == PluginInfo.GUID || guid == "com.yourname.silksongmodmenu")
+                    {
+                        Logger.LogInfo($"[Filter] Skipping self by GUID: {guid}");
+                        continue;
+                    }
+
+                    // 过滤 DLL 文件名
+                    if (IgnoredDlls.Contains(dllFileName))
+                    {
+                        Logger.LogInfo($"[Filter] Skipping system DLL: {dllFileName}");
+                        continue;
+                    }
 
                     string name = string.IsNullOrEmpty(pi.Metadata.Name) ? guid : pi.Metadata.Name;
                     string version = pi.Metadata.Version?.ToString() ?? "Unknown";
                     string author = "Unknown";
-                    string dllFileName = Path.GetFileName(pi.Location);
 
                     // 从元数据获取状态（通过 DLL 文件名）
                     var meta = ModMetadataManager.GetModByDll(dllFileName);
@@ -400,7 +436,7 @@ namespace ModUINamespace
                     Logger.LogInfo($"[Loaded Mod] {name} ({dllFileName})");
                 }
 
-                // 2️⃣ 扫描 .disabled 文件
+                // 2. 扫描 .disabled 文件
                 string pluginsDir = Paths.PluginPath;
                 if (Directory.Exists(pluginsDir))
                 {
@@ -413,6 +449,13 @@ namespace ModUINamespace
                             string fullFileName = Path.GetFileName(disabledPath); // ChairTeleport.dll.disabled
                             string dllFileName = Path.GetFileNameWithoutExtension(fullFileName); // ChairTeleport.dll
 
+                            // 过滤系统 DLL
+                            if (IgnoredDlls.Contains(dllFileName))
+                            {
+                                Logger.LogInfo($"[Filter] Skipping disabled system DLL: {dllFileName}");
+                                continue;
+                            }
+
                             if (processedDlls.Contains(dllFileName))
                             {
                                 Logger.LogInfo($"[Disabled Mod] {dllFileName} already processed, skipping");
@@ -424,7 +467,7 @@ namespace ModUINamespace
                             string displayName = meta?.Name ?? Path.GetFileNameWithoutExtension(dllFileName);
                             bool enabled = meta?.Enabled ?? false;
 
-                            // 如果元数据不存在，创建新记录
+                            // 如果元数据不存在,创建新记录
                             if (meta == null)
                             {
                                 ModMetadataManager.UpdateMod(dllFileName, "", displayName, "Unknown", "Unknown", false);
@@ -460,6 +503,5 @@ namespace ModUINamespace
 
             return list.OrderBy(p => p.displayName).ToList();
         }
-
     }
 }

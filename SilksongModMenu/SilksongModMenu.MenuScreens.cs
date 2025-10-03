@@ -422,6 +422,14 @@ namespace ModUINamespace
 
         private static void SetupModsContent(GameObject menuObj)
         {
+            Logger.LogInfo("╔═══════════════════════════════════════════════════════════════════");
+            Logger.LogInfo("║ SetupModsContent - Version 2.0 WITH SCROLLVIEW");
+            Logger.LogInfo("╚═══════════════════════════════════════════════════════════════════");
+
+#if DEBUG_UI
+    DiagnoseAllScrollbars();
+#endif
+
             Logger.LogInfo("=== SetupModsContent START ===");
 
             modsContentParent = FindContentParent(menuObj);
@@ -486,151 +494,845 @@ namespace ModUINamespace
 
             // 确保原型隐藏
             rowPrototype.SetActive(false);
+
+#if DEBUG_UI
+    // ========== 详细分析原型 ==========
+    if (rowPrototype != null)
+    {
+        Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
+        Logger.LogInfo("║ PROTOTYPE DETAILED ANALYSIS");
+        Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
+        Logger.LogInfo("║ [HIERARCHY]");
+        AnalyzeHierarchy(rowPrototype.transform, "║   ");
+        Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
+        Logger.LogInfo("║ [ALL COMPONENTS]");
+
+        var allComps = rowPrototype.GetComponentsInChildren<Component>(true);
+        foreach (var comp in allComps)
+        {
+            if (comp == null) continue;
+            var go = comp.gameObject;
+            var typeName = comp.GetType().Name;
+            Logger.LogInfo($"║ [{go.name}] {typeName}");
+
+            if (comp is Selectable sel)
+            {
+                Logger.LogInfo($"║   ├─ Interactable: {sel.interactable}");
+                Logger.LogInfo($"║   ├─ Navigation: {sel.navigation.mode}");
+                Logger.LogInfo($"║   ├─ Transition: {sel.transition}");
+            }
+
+            if (comp is Animator anim)
+            {
+                Logger.LogInfo($"║   ├─ Animator:");
+                Logger.LogInfo($"║   │  ├─ Controller: {anim.runtimeAnimatorController?.name ?? "null"}");
+                Logger.LogInfo($"║   │  └─ Enabled: {anim.enabled}");
+            }
+
+            if (comp is UnityEngine.UI.Image img)
+            {
+                Logger.LogInfo($"║   ├─ Image:");
+                Logger.LogInfo($"║   │  ├─ Sprite: {img.sprite?.name ?? "null"}");
+                Logger.LogInfo($"║   │  ├─ Color: {ColorToString(img.color)}");
+                Logger.LogInfo($"║   │  └─ Type: {img.type}");
+            }
+
+            if (comp is Text txt)
+            {
+                Logger.LogInfo($"║   ├─ Text: \"{txt.text}\"");
+                Logger.LogInfo($"║   └─ Color: {ColorToString(txt.color)}");
+            }
+        }
+
+        Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
+    }
+#endif
+
+            // 创建 ScrollView 包装
+            Logger.LogInfo(">>> CREATING SCROLLVIEW WRAPPER <<<");
+
+            // 1. 保存原始 Content 的信息
+            var originalContentRT = modsContentParent.GetComponent<RectTransform>();
+            var originalParent = modsContentParent.parent;
+            var originalSiblingIndex = modsContentParent.GetSiblingIndex();
+
+            Logger.LogInfo($"Original Content: parent={originalParent.name}, siblingIndex={originalSiblingIndex}");
+            Logger.LogInfo($"Original Content RectTransform: anchors=({originalContentRT.anchorMin}, {originalContentRT.anchorMax}), pos={originalContentRT.anchoredPosition}, size={originalContentRT.sizeDelta}");
+
+            // 2. 创建 ScrollView 根对象
+            var scrollViewObj = new GameObject("ModListScrollView", typeof(RectTransform));
+            var scrollViewRT = scrollViewObj.GetComponent<RectTransform>();
+            scrollViewRT.SetParent(originalParent, false);
+            scrollViewRT.SetSiblingIndex(originalSiblingIndex);
+
+            // 3. 复制原始 Content 的布局参数到 ScrollView
+            scrollViewRT.anchorMin = originalContentRT.anchorMin;
+            scrollViewRT.anchorMax = originalContentRT.anchorMax;
+            scrollViewRT.anchoredPosition = originalContentRT.anchoredPosition;
+            scrollViewRT.sizeDelta = originalContentRT.sizeDelta;
+
+            Logger.LogInfo($"ScrollView created: pos={scrollViewRT.anchoredPosition}, size={scrollViewRT.sizeDelta}");
+
+            #if DEBUG_UI
+            // 添加调试背景（紫色）
+            var scrollViewImage = scrollViewObj.AddComponent<Image>();
+            scrollViewImage.color = new Color(0.5f, 0f, 0.5f, 0.3f);
+            Logger.LogInfo("Added PURPLE debug background to ScrollView");
+            #endif
+
+            // 4. 添加 ScrollRect 组件
+            var scrollRect = scrollViewObj.AddComponent<ScrollRect>();
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            scrollRect.elasticity = 0.1f;
+            scrollRect.scrollSensitivity = 30f;
+            scrollRect.inertia = true;
+            scrollRect.decelerationRate = 0.135f;
+            Logger.LogInfo("ScrollRect component added");
+
+            // 5. 创建 Viewport
+            var viewportObj = new GameObject("Viewport", typeof(RectTransform));
+            var viewportRT = viewportObj.GetComponent<RectTransform>();
+            viewportRT.SetParent(scrollViewRT, false);
+            viewportRT.anchorMin = Vector2.zero;
+            viewportRT.anchorMax = Vector2.one;
+            viewportRT.sizeDelta = Vector2.zero;
+            viewportRT.anchoredPosition = Vector2.zero;
+            Logger.LogInfo($"Viewport created: size={viewportRT.rect.size}");
+
+            // ========== 关键修复1：添加透明 Image 以接收鼠标事件 ==========
+            var viewportImage = viewportObj.AddComponent<Image>();
+            #if DEBUG_UI
+            // 调试模式：半透明蓝色
+            viewportImage.color = new Color(0f, 0.5f, 1f, 0.3f);
+            Logger.LogInfo("Added BLUE debug background to Viewport");
+            #else
+            // 生产模式：完全透明（但仍能接收事件）
+            viewportImage.color = new Color(1f, 1f, 1f, 0.01f); // 几乎透明，但 raycastTarget 为 true
+            Logger.LogInfo("Added transparent Image to Viewport for mouse events");
+            #endif
+
+            // 6. 添加 RectMask2D（裁剪）
+            var rectMask = viewportObj.AddComponent<RectMask2D>();
+            scrollRect.viewport = viewportRT;
+            Logger.LogInfo("RectMask2D added to Viewport");
+
+            // 7. 将原始 Content 移到 Viewport 下
+            modsContentParent.SetParent(viewportRT, false);
+            Logger.LogInfo($"Original Content moved to Viewport (parent: {modsContentParent.parent.name})");
+
+            // 8. 重新配置 Content 的 RectTransform（适配 ScrollView）
+            originalContentRT.anchorMin = new Vector2(0, 1);
+            originalContentRT.anchorMax = new Vector2(1, 1);
+            originalContentRT.pivot = new Vector2(0.5f, 1);
+            originalContentRT.anchoredPosition = Vector2.zero;
+            originalContentRT.sizeDelta = new Vector2(0, 100);
+            Logger.LogInfo($"Content RectTransform reconfigured: anchors=({originalContentRT.anchorMin}, {originalContentRT.anchorMax})");
+
+            #if DEBUG_UI
+            // 添加调试背景（绿色）
+            var contentImage = modsContentParent.gameObject.AddComponent<Image>();
+            contentImage.color = new Color(0f, 1f, 0f, 0.2f);
+            Logger.LogInfo("Added GREEN debug background to Content");
+            #endif
+
+            // 9. 确保 VerticalLayoutGroup 存在
+            var vlg = modsContentParent.GetComponent<VerticalLayoutGroup>();
+            if (vlg == null)
+            {
+                vlg = modsContentParent.gameObject.AddComponent<VerticalLayoutGroup>();
+                Logger.LogInfo("Added VerticalLayoutGroup to Content");
+            }
+
+            vlg.childAlignment = TextAnchor.UpperCenter;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = false;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.spacing = 8f;
+            vlg.padding = new RectOffset(20, 20, 20, 20);
+            Logger.LogInfo("VerticalLayoutGroup configured (childControlHeight=false)");
+
+            // 10. 添加 ContentSizeFitter（自动调整高度）
+            var csf = modsContentParent.GetComponent<ContentSizeFitter>();
+            if (csf == null)
+            {
+                csf = modsContentParent.gameObject.AddComponent<ContentSizeFitter>();
+                Logger.LogInfo("Added ContentSizeFitter to Content");
+            }
+
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            Logger.LogInfo("ContentSizeFitter configured (verticalFit=PreferredSize)");
+
+            // 11. 设置 ScrollRect 的 content 引用
+            scrollRect.content = originalContentRT;
+            Logger.LogInfo("ScrollRect.content assigned");
+
+            // 12. 克隆原生滚动条（从成就菜单）
+            var scrollbarObj = CloneNativeScrollbar(scrollViewObj, scrollViewRT);
+            if (scrollbarObj != null)
+            {
+                var scrollbar = scrollbarObj.GetComponent<Scrollbar>();
+                scrollRect.verticalScrollbar = scrollbar;
+                scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+                scrollRect.verticalScrollbarSpacing = 10f;
+
+                // 重置 Scrollbar 的初始值
+                scrollbar.value = 1f; // 从顶部开始
+                scrollbar.size = 0.5f; // 临时值，会被 ScrollRect 自动更新
+
+                Logger.LogInfo($"Scrollbar linked: value={scrollbar.value}, size={scrollbar.size}");
+                Logger.LogInfo("ScrollRect will auto-update scrollbar.size based on content height");
+            }
+            else
+            {
+                Logger.LogWarning("Failed to clone native scrollbar");
+            }
+
+
+            // 13. 确保原型在 Content 下
             if (rowPrototype.transform.parent != modsContentParent)
             {
-                Logger.LogInfo("Moving prototype to content parent");
+                Logger.LogInfo("Moving prototype to new Content location");
                 rowPrototype.transform.SetParent(modsContentParent, false);
             }
 
-            Logger.LogInfo($"Final rowPrototype: {rowPrototype != null}, active: {rowPrototype.activeSelf}, name: {rowPrototype.name}");
-
-            // ========== 详细分析原型 ==========
-            if (rowPrototype != null)
-            {
-                Logger.LogInfo("╔════════════════════════════════════════════════════════════════");
-                Logger.LogInfo("║ PROTOTYPE DETAILED ANALYSIS");
-                Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
-
-                // 1. 分析层级结构
-                Logger.LogInfo("║ [HIERARCHY]");
-                AnalyzeHierarchy(rowPrototype.transform, "║   ");
-
-                Logger.LogInfo("╠════════════════════════════════════════════════════════════════");
-                Logger.LogInfo("║ [ALL COMPONENTS]");
-
-                // 2. 分析所有组件
-                var allComps = rowPrototype.GetComponentsInChildren<Component>(true);
-                foreach (var comp in allComps)
-                {
-                    if (comp == null) continue;
-
-                    var go = comp.gameObject;
-                    var typeName = comp.GetType().Name;
-                    Logger.LogInfo($"║ [{go.name}] {typeName}");
-
-                    // 3. 详细分析 Selectable
-                    if (comp is Selectable sel)
-                    {
-                        Logger.LogInfo($"║   ├─ Interactable: {sel.interactable}");
-                        Logger.LogInfo($"║   ├─ Navigation: {sel.navigation.mode}");
-                        Logger.LogInfo($"║   ├─ Transition: {sel.transition}");
-
-                        if (sel.transition == Selectable.Transition.ColorTint)
-                        {
-                            var colors = sel.colors;
-                            Logger.LogInfo($"║   ├─ ColorBlock:");
-                            Logger.LogInfo($"║   │  ├─ Normal: {ColorToString(colors.normalColor)}");
-                            Logger.LogInfo($"║   │  ├─ Highlighted: {ColorToString(colors.highlightedColor)}");
-                            Logger.LogInfo($"║   │  ├─ Pressed: {ColorToString(colors.pressedColor)}");
-                            Logger.LogInfo($"║   │  ├─ Selected: {ColorToString(colors.selectedColor)}");
-                            Logger.LogInfo($"║   │  └─ Disabled: {ColorToString(colors.disabledColor)}");
-                        }
-                        else if (sel.transition == Selectable.Transition.SpriteSwap)
-                        {
-                            Logger.LogInfo($"║   ├─ SpriteState:");
-                            Logger.LogInfo($"║   │  ├─ HighlightedSprite: {sel.spriteState.highlightedSprite?.name ?? "null"}");
-                            Logger.LogInfo($"║   │  ├─ PressedSprite: {sel.spriteState.pressedSprite?.name ?? "null"}");
-                            Logger.LogInfo($"║   │  └─ SelectedSprite: {sel.spriteState.selectedSprite?.name ?? "null"}");
-                        }
-                        else if (sel.transition == Selectable.Transition.Animation)
-                        {
-                            Logger.LogInfo($"║   ├─ AnimationTriggers:");
-                            Logger.LogInfo($"║   │  ├─ Normal: {sel.animationTriggers.normalTrigger}");
-                            Logger.LogInfo($"║   │  ├─ Highlighted: {sel.animationTriggers.highlightedTrigger}");
-                            Logger.LogInfo($"║   │  ├─ Pressed: {sel.animationTriggers.pressedTrigger}");
-                            Logger.LogInfo($"║   │  └─ Selected: {sel.animationTriggers.selectedTrigger}");
-                        }
-
-                        // 检查 TargetGraphic
-                        if (sel.targetGraphic != null)
-                        {
-                            Logger.LogInfo($"║   └─ TargetGraphic: {sel.targetGraphic.GetType().Name} on '{sel.targetGraphic.gameObject.name}'");
-                        }
-                    }
-
-                    // 4. 详细分析 EventTrigger
-                    if (comp is EventTrigger et)
-                    {
-                        Logger.LogInfo($"║   ├─ EventTrigger count: {et.triggers.Count}");
-                        foreach (var trigger in et.triggers)
-                        {
-                            Logger.LogInfo($"║   │  ├─ {trigger.eventID} (callbacks: {trigger.callback.GetPersistentEventCount()})");
-                        }
-                    }
-
-                    // 5. 分析 Button
-                    if (comp is Button btn)
-                    {
-                        Logger.LogInfo($"║   ├─ Button.onClick listeners: {btn.onClick.GetPersistentEventCount()}");
-                    }
-
-                    // 6. 分析 MenuButton
-                    if (typeName == "MenuButton")
-                    {
-                        try
-                        {
-                            var type = comp.GetType();
-                            var onSubmitField = type.GetField("OnSubmitPressed", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                            if (onSubmitField != null)
-                            {
-                                var submitEvent = onSubmitField.GetValue(comp);
-                                if (submitEvent != null)
-                                {
-                                    var getCountMethod = submitEvent.GetType().GetProperty("PersistentEventCount");
-                                    if (getCountMethod != null)
-                                    {
-                                        var count = getCountMethod.GetValue(submitEvent);
-                                        Logger.LogInfo($"║   ├─ MenuButton.OnSubmitPressed listeners: {count}");
-                                    }
-                                }
-                            }
-                        }
-                        catch (System.Exception e)
-                        {
-                            Logger.LogInfo($"║   ├─ MenuButton analysis failed: {e.Message}");
-                        }
-                    }
-
-                    // 7. 分析 Animator
-                    if (comp is Animator anim)
-                    {
-                        Logger.LogInfo($"║   ├─ Animator:");
-                        Logger.LogInfo($"║   │  ├─ Controller: {anim.runtimeAnimatorController?.name ?? "null"}");
-                        Logger.LogInfo($"║   │  └─ Enabled: {anim.enabled}");
-                    }
-
-                    // 8. 分析 Image
-                    if (comp is UnityEngine.UI.Image img)
-                    {
-                        Logger.LogInfo($"║   ├─ Image:");
-                        Logger.LogInfo($"║   │  ├─ Sprite: {img.sprite?.name ?? "null"}");
-                        Logger.LogInfo($"║   │  ├─ Color: {ColorToString(img.color)}");
-                        Logger.LogInfo($"║   │  └─ Type: {img.type}");
-                    }
-
-                    // 9. 分析 Text
-                    if (comp is Text txt)
-                    {
-                        Logger.LogInfo($"║   ├─ Text: \"{txt.text}\"");
-                        Logger.LogInfo($"║   └─ Color: {ColorToString(txt.color)}");
-                    }
-                }
-
-                Logger.LogInfo("╚════════════════════════════════════════════════════════════════");
-            }
+             #if DEBUG_UI
+            Logger.LogInfo("╔═══════════════════════════════════════════════════════════════════");
+            Logger.LogInfo("║ SCROLLVIEW STRUCTURE CREATED SUCCESSFULLY");
+            Logger.LogInfo("╠═══════════════════════════════════════════════════════════════════");
+            Logger.LogInfo($"║ ScrollView: {scrollViewRT.rect.size}");
+            Logger.LogInfo($"║ Viewport: {viewportRT.rect.size}");
+            Logger.LogInfo($"║ Content: sizeDelta={originalContentRT.sizeDelta}, height={originalContentRT.rect.height}");
+            Logger.LogInfo($"║ modsContentParent: {modsContentParent.name}");
+            Logger.LogInfo($"║ modsContentParent parent: {modsContentParent.parent.name}");
+            Logger.LogInfo($"║ rowPrototype parent: {rowPrototype.transform.parent.name}");
+            Logger.LogInfo($"║ Has ScrollRect: {modsContentParent.GetComponentInParent<ScrollRect>() != null}");
+            Logger.LogInfo("╚═══════════════════════════════════════════════════════════════════");
+            #endif
 
             Logger.LogInfo("=== SetupModsContent END ===");
         }
+
+
+
+        private static void CreateScrollView(Transform modsContentParent, ref GameObject rowPrototype)
+        {
+            try
+            {
+                Logger.LogInfo(">>> CREATING SCROLLVIEW WRAPPER <<<");
+
+                var originalContent = modsContentParent.gameObject;
+                var menuScreen = originalContent.transform.parent;
+
+                Logger.LogInfo($"Original Content: parent={menuScreen.name}, siblingIndex={originalContent.transform.GetSiblingIndex()}");
+
+                var originalRT = originalContent.GetComponent<RectTransform>();
+                Logger.LogInfo($"Original Content RectTransform: anchors=({originalRT.anchorMin}, {originalRT.anchorMax}), pos={originalRT.anchoredPosition}, size={originalRT.sizeDelta}");
+
+                // ========== 1. 创建 ScrollView 容器 ==========
+                var scrollViewObj = new GameObject("ModListScrollView", typeof(RectTransform));
+                var scrollViewRT = scrollViewObj.GetComponent<RectTransform>();
+                scrollViewRT.SetParent(menuScreen, false);
+                scrollViewRT.SetSiblingIndex(originalContent.transform.GetSiblingIndex());
+
+                scrollViewRT.anchorMin = new Vector2(0.5f, 0.5f);
+                scrollViewRT.anchorMax = new Vector2(0.5f, 0.5f);
+                scrollViewRT.pivot = new Vector2(0.5f, 0.5f);
+                scrollViewRT.anchoredPosition = originalRT.anchoredPosition;
+                scrollViewRT.sizeDelta = originalRT.sizeDelta;
+
+                Logger.LogInfo($"ScrollView created: pos={scrollViewRT.anchoredPosition}, size={scrollViewRT.sizeDelta}");
+
+                // 添加调试背景
+                var scrollViewBg = scrollViewObj.AddComponent<Image>();
+                scrollViewBg.color = new Color(0.5f, 0f, 0.5f, 0.3f); // 紫色
+                Logger.LogInfo("Added PURPLE debug background to ScrollView");
+
+                // ========== 2. 添加 ScrollRect 组件 ==========
+                var scrollRect = scrollViewObj.AddComponent<ScrollRect>();
+                Logger.LogInfo("ScrollRect component added");
+
+                // ========== 3. 创建 Viewport ==========
+                var viewportObj = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
+                var viewportRT = viewportObj.GetComponent<RectTransform>();
+                viewportRT.SetParent(scrollViewRT, false);
+
+                viewportRT.anchorMin = Vector2.zero;
+                viewportRT.anchorMax = Vector2.one;
+                viewportRT.sizeDelta = Vector2.zero;
+                viewportRT.anchoredPosition = Vector2.zero;
+
+                Logger.LogInfo($"Viewport created: size={viewportRT.sizeDelta}");
+
+                // 添加调试背景
+                var viewportBg = viewportObj.AddComponent<Image>();
+                viewportBg.color = new Color(0f, 0f, 1f, 0.2f); // 蓝色
+                Logger.LogInfo("Added BLUE debug background to Viewport");
+
+                var mask = viewportObj.GetComponent<RectMask2D>();
+                Logger.LogInfo("RectMask2D added to Viewport");
+
+                // ========== 4. 移动原始 Content 到 Viewport ==========
+                originalContent.transform.SetParent(viewportRT, false);
+                Logger.LogInfo($"Original Content moved to Viewport (parent: {originalContent.transform.parent.name})");
+
+                // 重新配置 Content 的 RectTransform
+                originalRT.anchorMin = new Vector2(0, 1);
+                originalRT.anchorMax = new Vector2(1, 1);
+                originalRT.pivot = new Vector2(0.5f, 1);
+                originalRT.anchoredPosition = Vector2.zero;
+                originalRT.sizeDelta = new Vector2(0, 100);
+
+                Logger.LogInfo("Content RectTransform reconfigured: anchors=((0.00, 1.00), (1.00, 1.00))");
+
+                // 添加调试背景
+                var contentBg = originalContent.AddComponent<Image>();
+                contentBg.color = new Color(0f, 1f, 0f, 0.2f); // 绿色
+                Logger.LogInfo("Added GREEN debug background to Content");
+
+                // ========== 5. 配置 VerticalLayoutGroup ==========
+                var layoutGroup = originalContent.GetComponent<VerticalLayoutGroup>();
+                if (layoutGroup == null)
+                {
+                    layoutGroup = originalContent.AddComponent<VerticalLayoutGroup>();
+                }
+
+                layoutGroup.childControlWidth = true;
+                layoutGroup.childControlHeight = false;
+                layoutGroup.childForceExpandWidth = true;
+                layoutGroup.childForceExpandHeight = false;
+                layoutGroup.spacing = 10f;
+                layoutGroup.padding = new RectOffset(20, 20, 20, 20);
+                layoutGroup.childAlignment = TextAnchor.UpperCenter;
+
+                Logger.LogInfo("VerticalLayoutGroup configured (childControlHeight=false)");
+
+                // ========== 6. 添加 ContentSizeFitter ==========
+                var sizeFitter = originalContent.GetComponent<ContentSizeFitter>();
+                if (sizeFitter == null)
+                {
+                    sizeFitter = originalContent.AddComponent<ContentSizeFitter>();
+                    Logger.LogInfo("Added ContentSizeFitter to Content");
+                }
+
+                sizeFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                sizeFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+                Logger.LogInfo("ContentSizeFitter configured (verticalFit=PreferredSize)");
+
+                // ========== 7. 配置 ScrollRect ==========
+                scrollRect.content = originalRT;
+                scrollRect.viewport = viewportRT;
+                scrollRect.horizontal = false;
+                scrollRect.vertical = true;
+                scrollRect.movementType = ScrollRect.MovementType.Clamped;
+                scrollRect.inertia = true;
+                scrollRect.decelerationRate = 0.135f;
+                scrollRect.scrollSensitivity = 60f;
+                scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+                scrollRect.verticalScrollbarSpacing = 10f;
+
+                Logger.LogInfo("ScrollRect.content assigned");
+
+                // ========== 8. 克隆原生滚动条 ==========
+                var scrollbar = CloneNativeScrollbar(scrollViewObj, scrollViewRT);
+                if (scrollbar != null)
+                {
+                    var scrollbarComponent = scrollbar.GetComponent<Scrollbar>();
+                    scrollRect.verticalScrollbar = scrollbarComponent;
+                    Logger.LogInfo("Scrollbar created and linked");
+                }
+                else
+                {
+                    Logger.LogWarning("Failed to create scrollbar, using ScrollRect without scrollbar");
+                }
+
+                // ========== 9. 输出最终结构 ==========
+                Logger.LogInfo("╔═══════════════════════════════════════════════════════════════════");
+                Logger.LogInfo("║ SCROLLVIEW STRUCTURE CREATED SUCCESSFULLY");
+                Logger.LogInfo("╠═══════════════════════════════════════════════════════════════════");
+                Logger.LogInfo($"║ ScrollView (PURPLE): {scrollViewRT.sizeDelta}");
+                Logger.LogInfo($"║ Viewport (BLUE): {viewportRT.sizeDelta}");
+                Logger.LogInfo($"║ Content (GREEN): sizeDelta={originalRT.sizeDelta}, height={originalRT.rect.height}");
+                Logger.LogInfo($"║ modsContentParent: {modsContentParent.name}");
+                Logger.LogInfo($"║ modsContentParent parent: {modsContentParent.parent.name}");
+                Logger.LogInfo($"║ rowPrototype parent: {rowPrototype.transform.parent.name}");
+
+                // 修复：正确查找 ScrollRect
+                var foundScrollRect = scrollViewObj.GetComponent<ScrollRect>();
+                Logger.LogInfo($"║ Has ScrollRect: {foundScrollRect != null}");
+                if (foundScrollRect != null)
+                {
+                    Logger.LogInfo($"║ ScrollRect.content: {foundScrollRect.content?.name ?? "null"}");
+                    Logger.LogInfo($"║ ScrollRect.viewport: {foundScrollRect.viewport?.name ?? "null"}");
+                    Logger.LogInfo($"║ ScrollRect.verticalScrollbar: {foundScrollRect.verticalScrollbar?.name ?? "null"}");
+                }
+
+                Logger.LogInfo("╚═══════════════════════════════════════════════════════════════════");
+                
+                // ========== 10. 添加滚轮支持 ==========
+                Logger.LogInfo(">>> Adding scroll wheel support <<<");
+                var scrollWheelHandler = scrollViewObj.AddComponent<ScrollWheelHandler>();
+                scrollWheelHandler.scrollRect = scrollRect;
+                Logger.LogInfo("Scroll wheel support added");
+
+
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"CreateScrollView failed: {e}");
+            }
+        }
+
+        /// <summary>
+        /// 克隆原生滚动条（从成就菜单）
+        /// </summary>
+        private static GameObject CloneNativeScrollbar(GameObject menuObj, Transform parent)
+        {
+            try
+            {
+                Logger.LogInfo(">>> Attempting to clone native scrollbar <<<");
+
+                Scrollbar nativeScrollbar = null;
+
+                // 方法1：通过完整路径查找
+                var uiManager = GameObject.Find("_UIManager");
+                if (uiManager != null)
+                {
+                    var achievementsPath = "UICanvas/AchievementsMenuScreen/Content/Scrollbar";
+                    var scrollbarTransform = uiManager.transform.Find(achievementsPath);
+                    if (scrollbarTransform != null)
+                    {
+                        nativeScrollbar = scrollbarTransform.GetComponent<Scrollbar>();
+                        if (nativeScrollbar != null)
+                        {
+                            Logger.LogInfo($"Found native scrollbar via path: {achievementsPath}");
+                        }
+                    }
+                }
+
+                // 方法2：全局搜索（备选）
+                if (nativeScrollbar == null)
+                {
+                    var allScrollbars = Resources.FindObjectsOfTypeAll<Scrollbar>();
+                    Logger.LogInfo($"Searching through {allScrollbars.Length} scrollbars...");
+
+                    foreach (var sb in allScrollbars)
+                    {
+                        if (sb.name == "Scrollbar" && sb.transform.parent?.name == "Content")
+                        {
+                            var grandParent = sb.transform.parent.parent;
+                            if (grandParent != null && grandParent.name == "AchievementsMenuScreen")
+                            {
+                                nativeScrollbar = sb;
+                                Logger.LogInfo("Found achievements scrollbar via search");
+                                break;
+                            }
+                        }
+                    }
+
+                    if (nativeScrollbar == null && allScrollbars.Length > 0)
+                    {
+                        nativeScrollbar = allScrollbars[0];
+                        Logger.LogInfo($"Using first available scrollbar: {nativeScrollbar.name}");
+                    }
+                }
+
+                if (nativeScrollbar == null)
+                {
+                    Logger.LogWarning("No native scrollbar found, creating custom one");
+                    return CreateCustomScrollbar(parent);
+                }
+
+                // 克隆滚动条
+                var clonedScrollbarObj = Instantiate(nativeScrollbar.gameObject, parent);
+                clonedScrollbarObj.name = "ModListScrollbar";
+
+                var clonedScrollbarRT = clonedScrollbarObj.GetComponent<RectTransform>();
+                var clonedScrollbar = clonedScrollbarObj.GetComponent<Scrollbar>();
+
+                // ========== 关键修复：正确设置滚动条位置 ==========
+                clonedScrollbarRT.anchorMin = new Vector2(1, 0);
+                clonedScrollbarRT.anchorMax = new Vector2(1, 1);
+                clonedScrollbarRT.pivot = new Vector2(1, 0.5f);
+
+                // 先设置 offsetMin/offsetMax，再设置 anchoredPosition
+                // 上下边距各 20 像素
+                clonedScrollbarRT.offsetMin = new Vector2(clonedScrollbarRT.offsetMin.x, 20);
+                clonedScrollbarRT.offsetMax = new Vector2(clonedScrollbarRT.offsetMax.x, -20);
+
+                // 从右边缘向左偏移 100 像素（这个值会覆盖 offsetMax.x）
+                clonedScrollbarRT.anchoredPosition = new Vector2(-100, 0);
+
+                Logger.LogInfo($"Scrollbar positioned:");
+                Logger.LogInfo($"  ├─ anchorMin: {clonedScrollbarRT.anchorMin}");
+                Logger.LogInfo($"  ├─ anchorMax: {clonedScrollbarRT.anchorMax}");
+                Logger.LogInfo($"  ├─ pivot: {clonedScrollbarRT.pivot}");
+                Logger.LogInfo($"  ├─ anchoredPosition: {clonedScrollbarRT.anchoredPosition}");
+                Logger.LogInfo($"  ├─ offsetMin: {clonedScrollbarRT.offsetMin}");
+                Logger.LogInfo($"  ├─ offsetMax: {clonedScrollbarRT.offsetMax}");
+                Logger.LogInfo($"  └─ sizeDelta: {clonedScrollbarRT.sizeDelta}");
+
+                clonedScrollbar.direction = Scrollbar.Direction.BottomToTop;
+
+                // 移除本地化组件
+                var localizers = clonedScrollbarObj.GetComponentsInChildren<AutoLocalizeTextUI>(true);
+                foreach (var loc in localizers)
+                {
+                    if (loc != null) Destroy(loc);
+                }
+
+                // 激活所有子对象
+                foreach (Transform child in clonedScrollbarObj.transform)
+                {
+                    child.gameObject.SetActive(true);
+                }
+
+                // ========== 关键修复：确保 Sliding Area 填满整个滚动条 ==========
+                var slidingArea = clonedScrollbarObj.transform.Find("Sliding Area");
+                if (slidingArea != null)
+                {
+                    var slidingAreaRT = slidingArea.GetComponent<RectTransform>();
+                    if (slidingAreaRT != null)
+                    {
+                        // 让 Sliding Area 填满整个滚动条（不留边距）
+                        slidingAreaRT.anchorMin = Vector2.zero;
+                        slidingAreaRT.anchorMax = Vector2.one;
+                        slidingAreaRT.offsetMin = Vector2.zero;
+                        slidingAreaRT.offsetMax = Vector2.zero;
+                        slidingAreaRT.anchoredPosition = Vector2.zero;
+
+                        Logger.LogInfo("Sliding Area adjusted to full size");
+                        Logger.LogInfo($"  ├─ anchorMin: {slidingAreaRT.anchorMin}");
+                        Logger.LogInfo($"  ├─ anchorMax: {slidingAreaRT.anchorMax}");
+                        Logger.LogInfo($"  ├─ offsetMin: {slidingAreaRT.offsetMin}");
+                        Logger.LogInfo($"  ├─ offsetMax: {slidingAreaRT.offsetMax}");
+                        Logger.LogInfo($"  └─ sizeDelta: {slidingAreaRT.sizeDelta}");
+
+                        // 调整 Handle
+                        var handle = slidingArea.Find("Handle");
+                        if (handle != null)
+                        {
+                            var handleRT = handle.GetComponent<RectTransform>();
+                            if (handleRT != null)
+                            {
+                                handleRT.anchorMin = new Vector2(0, 0);
+                                handleRT.anchorMax = new Vector2(1, 1);
+                                handleRT.offsetMin = Vector2.zero;
+                                handleRT.offsetMax = Vector2.zero;
+                                handleRT.anchoredPosition = Vector2.zero;
+
+                                Logger.LogInfo("Handle adjusted");
+                                Logger.LogInfo($"  ├─ anchorMin: {handleRT.anchorMin}");
+                                Logger.LogInfo($"  ├─ anchorMax: {handleRT.anchorMax}");
+                                Logger.LogInfo($"  └─ sizeDelta: {handleRT.sizeDelta}");
+                            }
+                        }
+                    }
+                }
+
+                // 调整 Background
+                var background = clonedScrollbarObj.transform.Find("Background");
+                if (background != null)
+                {
+                    var backgroundRT = background.GetComponent<RectTransform>();
+                    if (backgroundRT != null)
+                    {
+                        // 将 Background 移到 Sliding Area 下
+                        background.SetParent(slidingArea, false);
+
+                        // 让 Background 垂直填满 Sliding Area
+                        backgroundRT.anchorMin = new Vector2(0.5f, 0);
+                        backgroundRT.anchorMax = new Vector2(0.5f, 1);
+                        backgroundRT.pivot = new Vector2(0.5f, 0.5f);
+                        backgroundRT.anchoredPosition = Vector2.zero;
+                        backgroundRT.offsetMin = new Vector2(-2.5f, 0);  // 宽度 5px
+                        backgroundRT.offsetMax = new Vector2(2.5f, 0);
+
+                        Logger.LogInfo("Background moved to Sliding Area and stretched");
+                        Logger.LogInfo($"  ├─ anchorMin: {backgroundRT.anchorMin}");
+                        Logger.LogInfo($"  ├─ anchorMax: {backgroundRT.anchorMax}");
+                        Logger.LogInfo($"  └─ sizeDelta: {backgroundRT.sizeDelta}");
+                    }
+                }
+                else
+                {
+                    Logger.LogWarning("Background not found");
+                }
+
+                // ========== 关键修复：重新设置 Scrollbar 的 handleRect ==========
+                var handleTransform = slidingArea?.Find("Handle");
+                if (handleTransform != null)
+                {
+                    var handleRT = handleTransform.GetComponent<RectTransform>();
+                    clonedScrollbar.handleRect = handleRT;
+
+                    // 确保 targetGraphic 正确设置
+                    var handleImage = handleTransform.GetComponent<Image>();
+                    if (handleImage != null)
+                    {
+                        clonedScrollbar.targetGraphic = handleImage;
+                        Logger.LogInfo("Scrollbar targetGraphic set to Handle Image");
+                    }
+
+                    Logger.LogInfo($"Scrollbar handleRect set to: {handleRT.name}");
+                }
+                else
+                {
+                    Logger.LogWarning("Handle not found, scrollbar may not respond to clicks");
+                }
+
+#if DEBUG_UI
+        Logger.LogInfo("========== SCROLLBAR HIERARCHY DEBUG ==========");
+
+        void LogTransformHierarchy(Transform t, int depth = 0)
+        {
+            string indent = new string(' ', depth * 2);
+            var rt = t.GetComponent<RectTransform>();
+
+            if (rt != null)
+            {
+                Logger.LogInfo($"{indent}├─ {t.name}");
+                Logger.LogInfo($"{indent}│  ├─ anchorMin: {rt.anchorMin}");
+                Logger.LogInfo($"{indent}│  ├─ anchorMax: {rt.anchorMax}");
+                Logger.LogInfo($"{indent}│  ├─ offsetMin: {rt.offsetMin}");
+                Logger.LogInfo($"{indent}│  ├─ offsetMax: {rt.offsetMax}");
+                Logger.LogInfo($"{indent}│  ├─ sizeDelta: {rt.sizeDelta}");
+                Logger.LogInfo($"{indent}│  ├─ anchoredPosition: {rt.anchoredPosition}");
+                Logger.LogInfo($"{indent}│  └─ pivot: {rt.pivot}");
+            }
+            else
+            {
+                Logger.LogInfo($"{indent}├─ {t.name} (no RectTransform)");
+            }
+
+            foreach (Transform child in t)
+            {
+                LogTransformHierarchy(child, depth + 1);
+            }
+        }
+
+        LogTransformHierarchy(clonedScrollbarObj.transform);
+        Logger.LogInfo("===============================================");
+#endif
+
+                clonedScrollbarObj.SetActive(true);
+
+                Logger.LogInfo("Native scrollbar cloned successfully");
+                Logger.LogInfo($"  ├─ Has TopFleur: {clonedScrollbarObj.transform.Find("TopFleur") != null}");
+                Logger.LogInfo($"  ├─ Has Background: {clonedScrollbarObj.transform.Find("Background") != null}");
+                Logger.LogInfo($"  ├─ Handle: {clonedScrollbar.handleRect?.name ?? "null"}");
+                Logger.LogInfo($"  ├─ Direction: {clonedScrollbar.direction}");
+                Logger.LogInfo($"  ├─ Value: {clonedScrollbar.value}");
+                Logger.LogInfo($"  └─ Size: {clonedScrollbar.size}");
+
+                return clonedScrollbarObj;
+
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"CloneNativeScrollbar failed: {e}");
+                return CreateCustomScrollbar(parent);
+            }
+        }
+
+
+
+        /// <summary>
+        /// 创建自定义滚动条（备用方案）
+        /// </summary>
+        private static GameObject CreateCustomScrollbar(Transform parent)
+        {
+            try
+            {
+                Logger.LogInfo(">>> Creating custom scrollbar (fallback) <<<");
+
+                var scrollbarObj = new GameObject("Scrollbar", typeof(RectTransform));
+                var scrollbarRT = scrollbarObj.GetComponent<RectTransform>();
+                scrollbarRT.SetParent(parent, false);
+
+                scrollbarRT.anchorMin = new Vector2(1, 0);
+                scrollbarRT.anchorMax = new Vector2(1, 1);
+                scrollbarRT.pivot = new Vector2(1, 0.5f);
+                scrollbarRT.anchoredPosition = new Vector2(-10, 0);
+                scrollbarRT.sizeDelta = new Vector2(12, 0);
+
+                var scrollbar = scrollbarObj.AddComponent<Scrollbar>();
+                scrollbar.direction = Scrollbar.Direction.BottomToTop;
+
+                // 背景
+                var bgImage = scrollbarObj.AddComponent<Image>();
+                bgImage.color = new Color(0.15f, 0.15f, 0.15f, 0.6f);
+
+                // Sliding Area
+                var slidingAreaObj = new GameObject("Sliding Area", typeof(RectTransform));
+                var slidingAreaRT = slidingAreaObj.GetComponent<RectTransform>();
+                slidingAreaRT.SetParent(scrollbarRT, false);
+                slidingAreaRT.anchorMin = Vector2.zero;
+                slidingAreaRT.anchorMax = Vector2.one;
+                slidingAreaRT.sizeDelta = new Vector2(-2, -2);
+                slidingAreaRT.anchoredPosition = Vector2.zero;
+
+                // Handle
+                var handleObj = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+                var handleRT = handleObj.GetComponent<RectTransform>();
+                handleRT.SetParent(slidingAreaRT, false);
+                handleRT.anchorMin = Vector2.zero;
+                handleRT.anchorMax = Vector2.one;
+                handleRT.sizeDelta = new Vector2(0, 40);
+                handleRT.anchoredPosition = Vector2.zero;
+
+                var handleImage = handleObj.GetComponent<Image>();
+                handleImage.color = new Color(0.9f, 0.9f, 0.9f, 0.9f);
+
+                scrollbar.handleRect = handleRT;
+                scrollbar.targetGraphic = handleImage;
+
+                Logger.LogInfo("Custom scrollbar created");
+                return scrollbarObj;
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"CreateCustomScrollbar failed: {e}");
+                return null;
+            }
+        }
+
+
+
+        /// <summary>
+        /// 添加滚轮支持（监听鼠标滚轮和键盘上下键）
+        /// </summary>
+        private static void AddScrollWheelSupport(GameObject scrollViewObj, ScrollRect scrollRect)
+        {
+            try
+            {
+                Logger.LogInfo(">>> Adding scroll wheel support <<<");
+
+                // 添加 ScrollWheelHandler 组件
+                var handler = scrollViewObj.AddComponent<ScrollWheelHandler>();
+                handler.scrollRect = scrollRect;
+
+                Logger.LogInfo("Scroll wheel support added");
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"AddScrollWheelSupport failed: {e}");
+            }
+        }
+
+        /// <summary>
+        /// 滚轮处理组件
+        /// </summary>
+        private class ScrollWheelHandler : MonoBehaviour
+        {
+            public ScrollRect scrollRect;
+            private float scrollSpeed = 0.1f; // 每次滚动的距离（0-1之间）
+
+            private void Update()
+            {
+                if (scrollRect == null) return;
+
+                // 1. 鼠标滚轮
+                float scrollDelta = Input.GetAxis("Mouse ScrollWheel");
+                if (Mathf.Abs(scrollDelta) > 0.01f)
+                {
+                    // 向上滚动（scrollDelta > 0）-> 内容向下移动（verticalNormalizedPosition 增加）
+                    // 向下滚动（scrollDelta < 0）-> 内容向上移动（verticalNormalizedPosition 减少）
+                    scrollRect.verticalNormalizedPosition = Mathf.Clamp01(
+                        scrollRect.verticalNormalizedPosition + scrollDelta * scrollSpeed * 10f
+                    );
+                }
+
+                // 2. 键盘方向键（可选）
+                if (Input.GetKey(KeyCode.UpArrow) || Input.GetKey(KeyCode.W))
+                {
+                    scrollRect.verticalNormalizedPosition = Mathf.Clamp01(
+                        scrollRect.verticalNormalizedPosition + scrollSpeed * Time.deltaTime
+                    );
+                }
+                else if (Input.GetKey(KeyCode.DownArrow) || Input.GetKey(KeyCode.S))
+                {
+                    scrollRect.verticalNormalizedPosition = Mathf.Clamp01(
+                        scrollRect.verticalNormalizedPosition - scrollSpeed * Time.deltaTime
+                    );
+                }
+
+                // 3. 手柄摇杆（可选）
+                float verticalAxis = Input.GetAxis("Vertical");
+                if (Mathf.Abs(verticalAxis) > 0.1f)
+                {
+                    scrollRect.verticalNormalizedPosition = Mathf.Clamp01(
+                        scrollRect.verticalNormalizedPosition + verticalAxis * scrollSpeed * Time.deltaTime
+                    );
+                }
+            }
+        }
+
+
+        private static GameObject CreateScrollbar(Transform parent)
+        {
+            try
+            {
+                // 1. 创建 Scrollbar 根对象
+                var scrollbarObj = new GameObject("Scrollbar", typeof(RectTransform));
+                var scrollbarRT = scrollbarObj.GetComponent<RectTransform>();
+                scrollbarRT.SetParent(parent, false);
+
+                // 2. 定位到右侧
+                scrollbarRT.anchorMin = new Vector2(1, 0);
+                scrollbarRT.anchorMax = new Vector2(1, 1);
+                scrollbarRT.pivot = new Vector2(1, 0.5f);
+                scrollbarRT.anchoredPosition = new Vector2(-5, 0); // 距离右边缘5像素
+                scrollbarRT.sizeDelta = new Vector2(20, 0); // 宽度20像素
+
+                // 3. 添加 Scrollbar 组件
+                var scrollbar = scrollbarObj.AddComponent<Scrollbar>();
+                scrollbar.direction = Scrollbar.Direction.BottomToTop;
+
+                // 4. 创建 Sliding Area
+                var slidingAreaObj = new GameObject("Sliding Area", typeof(RectTransform));
+                var slidingAreaRT = slidingAreaObj.GetComponent<RectTransform>();
+                slidingAreaRT.SetParent(scrollbarRT, false);
+                slidingAreaRT.anchorMin = Vector2.zero;
+                slidingAreaRT.anchorMax = Vector2.one;
+                slidingAreaRT.sizeDelta = new Vector2(-20, -20); // 留边距
+                slidingAreaRT.anchoredPosition = Vector2.zero;
+
+                // 5. 创建 Handle
+                var handleObj = new GameObject("Handle", typeof(RectTransform), typeof(Image));
+                var handleRT = handleObj.GetComponent<RectTransform>();
+                handleRT.SetParent(slidingAreaRT, false);
+                handleRT.anchorMin = Vector2.zero;
+                handleRT.anchorMax = Vector2.one;
+                handleRT.sizeDelta = new Vector2(20, 20);
+                handleRT.anchoredPosition = Vector2.zero;
+
+                var handleImage = handleObj.GetComponent<Image>();
+                handleImage.color = new Color(1f, 1f, 1f, 0.5f); // 半透明白色
+
+                // 6. 设置 Scrollbar 的 handleRect
+                scrollbar.handleRect = handleRT;
+                scrollbar.targetGraphic = handleImage;
+
+                // 7. 添加背景
+                var bgImage = scrollbarObj.AddComponent<Image>();
+                bgImage.color = new Color(0f, 0f, 0f, 0.3f); // 半透明黑色背景
+
+                Logger.LogInfo("Scrollbar created successfully");
+                return scrollbarObj;
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"CreateScrollbar failed: {e}");
+                return null;
+            }
+        }
+
+
 
         private static void DisableMenuButtonList(GameObject menuObj)
         {
@@ -812,9 +1514,9 @@ namespace ModUINamespace
             var inputHandler = Traverse.Create(uiManager).Field("ih").GetValue<InputHandler>();
             if (inputHandler != null) inputHandler.StopUIInput();
 
-            #if UI_DIAG
+#if UI_DIAG
             DiagnoseUIHierarchy(modOptionsMenuScreen.gameObject, "BEFORE SHOW");
-            #endif
+#endif
 
             // 用原生隐藏 Extras，触发原生出场动画（不要传 disable）
             if (uiManager.extrasMenuScreen != null && uiManager.extrasMenuScreen.gameObject.activeSelf)
@@ -827,9 +1529,9 @@ namespace ModUINamespace
             yield return uiManager.ShowMenu(modOptionsMenuScreen);
 
             yield return new WaitForSeconds(0.1f); // 等动画稳定
-            #if UI_DIAG
+#if UI_DIAG
             DiagnoseUIHierarchy(modOptionsMenuScreen.gameObject, "AFTER SHOW (animation done)");
-            #endif
+#endif
 
             var canvasGroup = modOptionsMenuScreen.ScreenCanvasGroup;
             if (canvasGroup != null)
