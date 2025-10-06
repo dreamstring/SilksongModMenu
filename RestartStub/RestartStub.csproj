@@ -1,13 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
-    <!-- 删除固定的 RuntimeIdentifier，改为命令行指定 -->
-    <!-- <RuntimeIdentifier>win-x64</RuntimeIdentifier> -->
-
+    <!-- 单文件默认设置 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
@@ -15,7 +14,8 @@
     <DebugType>None</DebugType>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' OR '$(RuntimeIdentifier)' == ''">
+  <!-- 添加这个 ItemGroup -->
+  <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 </Project>

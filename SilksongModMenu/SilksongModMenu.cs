@@ -18,7 +18,7 @@ namespace ModUINamespace
         {
             public const string GUID = "com.silksong.modmenu";
             public const string Name = "Silksong Mod Menu";
-            public const string Version = "1.1.0";
+            public const string Version = "1.0.1";
             public const string Author = "dringqian";
             public const string Website = "https://github.com/dreamstring/SilksongModMenu";
         }
@@ -88,7 +88,7 @@ namespace ModUINamespace
             {
                 Logger.LogInfo("[Update] Cancel key pressed in Mod menu!");
 
-                var uiManager = FindFirstObjectByType<UIManager>();
+                var uiManager = FindObjectOfType<UIManager>();
                 if (uiManager != null)
                 {
                     StartCoroutine(ReturnToExtrasMenuCoroutine(uiManager));
@@ -239,7 +239,7 @@ namespace ModUINamespace
             {
                 SilksongModMenu.Logger.LogInfo("[GoBack Patch] Intercepted! Returning to Extras menu...");
 
-                var uiManager = GameObject.FindFirstObjectByType<UIManager>();
+                var uiManager = GameObject.FindObjectOfType<UIManager>();
                 if (uiManager != null)
                 {
                     uiManager.StartCoroutine(SilksongModMenu.ReturnToExtrasMenuCoroutine(uiManager));
