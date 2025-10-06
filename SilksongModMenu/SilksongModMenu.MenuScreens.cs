@@ -609,8 +609,9 @@ namespace ModUINamespace
             Logger.LogInfo("Added BLUE debug background to Viewport");
             #else
             // 生产模式：完全透明（但仍能接收事件）
-            viewportImage.color = new Color(1f, 1f, 1f, 0.01f); // 几乎透明，但 raycastTarget 为 true
-            Logger.LogInfo("Added transparent Image to Viewport for mouse events");
+            viewportImage.color = new Color(0f, 0f, 0f, 0f); // 完全透明
+            viewportImage.raycastTarget = true; // 显式确保能接收鼠标事件
+            Logger.LogInfo("Added fully transparent Image to Viewport (invisible but interactive)");
             #endif
 
             // 6. 添加 RectMask2D（裁剪）
