@@ -1,0 +1,130 @@
+name: Build Multi-Platform Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-all:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            platform: windows-x64
+            
+          - os: macos-latest
+            rid: osx-x64
+            platform: macos-intel
+            
+          - os: macos-latest
+            rid: osx-arm64
+            platform: macos-arm64
+            
+          - os: ubuntu-latest
+            rid: linux-x64
+            platform: linux-x64
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build SilksongModMenu
+        run: dotnet build SilksongModMenu/SilksongModMenu.csproj -c Release --no-restore
+      
+      - name: Build ModPostProcessor
+        run: |
+          dotnet publish ModPostProcessor/ModPostProcessor.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            --no-restore \
+            -o out/ModPostProcessor
+        shell: bash
+      
+      - name: Build RestartStub
+        run: |
+          dotnet publish RestartStub/RestartStub.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            --no-restore \
+            -o out/RestartStub
+        shell: bash
+      
+      - name: Prepare files (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path package
+          Copy-Item SilksongModMenu/bin/Release/net8.0/SilksongModMenu.dll package/
+          Copy-Item out/ModPostProcessor/ModPostProcessor.exe package/
+          Copy-Item out/RestartStub/RestartStub.exe package/
+        shell: pwsh
+      
+      - name: Prepare files (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p package
+          cp SilksongModMenu/bin/Release/net8.0/SilksongModMenu.dll package/
+          cp out/ModPostProcessor/ModPostProcessor package/
+          cp out/RestartStub/RestartStub package/
+        shell: bash
+      
+      - name: Set permissions (Unix)
+        if: runner.os != 'Windows'
+        run: chmod +x package/ModPostProcessor package/RestartStub
+      
+      - name: Create zip (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd package
+          Compress-Archive -Path * -DestinationPath ../SilksongModMenu-${{ matrix.platform }}.zip
+        shell: pwsh
+      
+      - name: Create zip (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd package
+          zip -r ../SilksongModMenu-${{ matrix.platform }}.zip *
+        shell: bash
+      
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: SilksongModMenu-${{ matrix.platform }}
+          path: SilksongModMenu-${{ matrix.platform }}.zip
+
+  create-release:
+    name: Create Release
+    needs: build-all
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
